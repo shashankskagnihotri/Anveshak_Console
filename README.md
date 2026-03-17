@@ -8,6 +8,14 @@
 >
 > TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows.
 
+<p align="center">
+  <video src="demo_video/anveshak_demo_using_web_with_open-source_models.mp4" autoplay loop muted playsinline controls width="100%"></video>
+</p>
+
+<p align="center">
+  <a href="demo_video/anveshak_demo_using_web_with_open-source_models.mp4">Watch or download the demo video</a>
+</p>
+
 Anveshak Console is built for research workflows that need strong local control without giving up the feel of a modern frontier assistant. It runs open multimodal models on your own GPU, keeps checkpoints and memory on your own machine, retrieves fresh web evidence during a run, and exposes the whole stack in code so the system stays inspectable, reproducible, and extensible.
 
 ## Why This Project Matters
