@@ -6,13 +6,9 @@
 
 > Private multimodal reasoning with local memory and live retrieval.
 >
-> TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows.
+> TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows using open-source models.
 
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=qFrBSUA1BPo">
-    <img src="https://img.youtube.com/vi/qFrBSUA1BPo/maxresdefault.jpg" alt="Watch the Anveshak Console demo on YouTube" width="100%" />
-  </a>
-</p>
+
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=qFrBSUA1BPo">Watch the demo on YouTube</a>
