@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.dylib
+*.egg
+*.egg-info/
+.Python
+.coverage
+.coverage.*
+.mypy_cache/
+.nox/
+.pyre/
+.pytest_cache/
+.ruff_cache/
+.tox/
+build/
+dist/
+htmlcov/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local runtime state
+API_calls/
+checkpoints/
+context_window/
+logs/
+debugging/
+
+# Local verification and tests
+tests/
+
+# Notebooks and misc local files
+.ipynb_checkpoints/
+*.log
+*.tmp
+*.bak
+
+# Env files
+.env
+.env.*

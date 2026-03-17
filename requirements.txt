@@ -1,0 +1,26 @@
+accelerate
+aiofiles
+ddgs
+decord
+faiss-cpu
+fastapi
+gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git
+httpx
+optimum
+orjson
+openpyxl
+psutil
+PyMuPDF
+pypdf
+pytest
+python-docx
+python-multipart
+python-pptx
+qwen-vl-utils
+rich
+safetensors
+sentence-transformers
+sentencepiece
+trafilatura
+transformers @ git+https://github.com/huggingface/transformers.git@main
+uvicorn[standard]

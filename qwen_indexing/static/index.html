@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anveshak Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div id="runtime-overlay" class="runtime-overlay">
+      <div class="runtime-card">
+        <p class="eyebrow">Preparing local runtime</p>
+        <h1>Loading checkpoints</h1>
+        <p id="runtime-message" class="subtle">Checking local models in <code>./checkpoints</code></p>
+        <div class="progress">
+          <div id="runtime-progress-bar" class="progress-bar"></div>
+        </div>
+        <div class="runtime-meta">
+          <span id="runtime-percent">0%</span>
+          <span id="runtime-file">Waiting...</span>
+        </div>
+        <div class="runtime-grid">
+          <div class="runtime-pill">
+            <span>Reasoning model</span>
+            <strong id="runtime-model">-</strong>
+          </div>
+          <div class="runtime-pill">
+            <span>Embedding model for RAGs</span>
+            <strong id="runtime-embedding">-</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="/logo/anveshak_logo2.png" alt="Anveshak Console logo" />
+        <div>
+          <p class="eyebrow">Private multimodal reasoning with local memory and live retrieval</p>
+          <h1>Anveshak Console</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="home-button" class="nav-button">Home</button>
+        <div class="menu-wrap">
+          <button class="nav-button">API Calls</button>
+          <div class="menu-dropdown">
+            <button id="new-api-call" class="menu-item">Setup New API Call</button>
+            <button id="existing-api-calls" class="menu-item">Existing API Calls</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="chat-view" class="view active">
+        <aside class="sidebar">
+          <div class="panel">
+            <h2>Current Runtime</h2>
+            <div id="runtime-summary" class="runtime-summary"></div>
+          </div>
+          <div class="panel">
+            <div class="steer-header">
+              <h2>Steer Current Run</h2>
+              <span id="steer-badge" class="badge muted">Idle</span>
+            </div>
+            <p class="subtle">Steering unlocks only while the assistant is actively generating an answer.</p>
+            <textarea id="steer-input" placeholder="Point the assistant toward a source, constraint, or direction..."></textarea>
+            <button id="steer-button" class="ghost">Send steering note</button>
+          </div>
+        </aside>
+
+        <section class="chat-panel">
+          <div id="messages" class="messages"></div>
+          <div class="composer-wrap">
+            <div id="drop-zone" class="drop-zone">
+              <div>
+                <strong>Drop files here</strong>
+                <span>Images and videos go to the VLM. PDFs are parsed into text plus page or figure visuals for retrieval.</span>
+              </div>
+            </div>
+            <div id="file-list" class="file-list"></div>
+            <label class="composer">
+              <textarea id="prompt" placeholder="Ask something, reference a local path, or say Obliviate to reset memory."></textarea>
+              <div class="composer-actions">
+                <label class="attach">
+                  <input id="file-input" type="file" multiple />
+                  Attach files
+                </label>
+                <button id="send-button">Send</button>
+              </div>
+            </label>
+          </div>
+        </section>
+      </section>
+
+      <section id="api-view" class="view">
+        <aside class="sidebar">
+          <div class="panel">
+            <h2>Existing API Calls</h2>
+            <div id="api-call-list" class="api-call-list"></div>
+          </div>
+          <div class="panel">
+            <h2>How It Works</h2>
+            <p class="subtle">Each API call preset stores its system prompt, input template, response instructions, and a generated API key inside <code>./API_calls</code>.</p>
+            <p class="subtle">Invoke with <code>POST /v1/api-calls/&lt;api_key&gt;/invoke</code>.</p>
+          </div>
+        </aside>
+
+        <section class="api-panel">
+          <div class="panel api-editor">
+            <div class="api-editor-header">
+              <div>
+                <p class="eyebrow">API Call Builder</p>
+                <h2 id="api-form-title">Setup New API Call</h2>
+              </div>
+              <div id="api-key-box" class="api-key-box hidden"></div>
+            </div>
+
+            <label class="field">
+              <span>Name</span>
+              <input id="api-name" type="text" placeholder="Paper extraction pipeline" />
+            </label>
+
+            <label class="field">
+              <span>Model</span>
+              <input id="api-model" type="text" readonly />
+            </label>
+
+            <label class="field">
+              <span>System prompt</span>
+              <textarea id="api-system-prompt" placeholder="You are a structured extraction assistant..."></textarea>
+            </label>
+
+            <label class="field">
+              <span>Input template</span>
+              <textarea id="api-input-template" placeholder="User input:\n{{input}}\n\nVariables:\n{{json}}"></textarea>
+            </label>
+
+            <label class="field">
+              <span>Response instructions</span>
+              <textarea id="api-response-instructions" placeholder="Return strict JSON with keys title, summary, and citations."></textarea>
+            </label>
+
+            <label class="field">
+              <span>Response mode</span>
+              <select id="api-response-mode">
+                <option value="text">text</option>
+                <option value="json">json</option>
+              </select>
+            </label>
+
+            <div class="api-actions">
+              <button id="save-api-call">Save API Call</button>
+              <button id="reset-api-form" class="ghost">Reset Form</button>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
