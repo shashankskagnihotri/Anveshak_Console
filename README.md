@@ -3,10 +3,12 @@
 </p>
 
 # Anveshak Console
+## Open-source models that use Internet and have long-context memory!
 
 > Private multimodal reasoning with local memory and live retrieval.
 >
 > TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows using open-source models.
+
 
 
 <p align="center">
