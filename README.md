@@ -9,6 +9,9 @@
 > TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows using open-source models.
 
 
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/f1beda5d-0af0-4594-8ba0-0d97fc579f56" autoplay loop muted playsinline controls width="100%"></video>
+</p>
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=qFrBSUA1BPo">Watch the demo on YouTube</a>
