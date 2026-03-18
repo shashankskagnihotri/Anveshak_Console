@@ -2,13 +2,17 @@ accelerate
 aiofiles
 ddgs
 decord
+einops
 faiss-cpu
 fastapi
-gptqmodel @ git+https://github.com/ModelCloud/GPTQModel.git
+gptqmodel>=5.7.0,<5.9
+huggingface-hub
 httpx
+numpy
 optimum
 orjson
 openpyxl
+pillow
 psutil
 PyMuPDF
 pypdf
@@ -21,6 +25,11 @@ rich
 safetensors
 sentence-transformers
 sentencepiece
+timm
+tiktoken
+torch
+torchvision
+tqdm
 trafilatura
-transformers @ git+https://github.com/huggingface/transformers.git@main
+transformers==5.3.0
 uvicorn[standard]

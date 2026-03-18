@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Anveshak Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div id="runtime-overlay" class="runtime-overlay">
+      <div class="runtime-card">
+        <p class="eyebrow">Preparing local runtime</p>
+        <h1>Loading checkpoints</h1>
+        <p id="runtime-message" class="subtle">Checking local models in <code>./checkpoints</code></p>
+        <div class="progress">
+          <div id="runtime-progress-bar" class="progress-bar"></div>
+        </div>
+        <div class="runtime-meta">
+          <span id="runtime-percent">0%</span>
+          <span id="runtime-file">Waiting...</span>
+        </div>
+        <div class="runtime-grid">
+          <div class="runtime-pill">
+            <span>Reasoning model</span>
+            <strong id="runtime-model">-</strong>
+          </div>
+          <div class="runtime-pill">
+            <span>Embedding model for RAGs</span>
+            <strong id="runtime-embedding">-</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="brand">
+        <img class="brand-logo" src="/static/anveshak_logo2.png" alt="Anveshak Console logo" />
+        <div>
+          <p class="eyebrow">Private multimodal reasoning with local memory and live retrieval</p>
+          <h1>Anveshak Console</h1>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="home-button" class="nav-button">Home</button>
+        <div class="menu-wrap">
+          <button class="nav-button">API Calls</button>
+          <div class="menu-dropdown">
+            <button id="new-api-call" class="menu-item">Setup New API Call</button>
+            <button id="existing-api-calls" class="menu-item">Existing API Keys</button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="chat-view" class="view active">
+        <aside class="sidebar">
+          <div class="panel">
+            <h2>Current Runtime</h2>
+            <div id="runtime-summary" class="runtime-summary"></div>
+          </div>
+          <div class="panel">
+            <div class="steer-header">
+              <h2>Steer Current Run</h2>
+              <span id="steer-badge" class="badge muted">Idle</span>
+            </div>
+            <p id="steer-hint" class="subtle">Steering unlocks only while the assistant is actively generating an answer.</p>
+            <textarea id="steer-input" placeholder="Point the assistant toward a source, constraint, or direction..."></textarea>
+            <button id="steer-button" class="ghost">Send steering note</button>
+          </div>
+        </aside>
+
+        <section class="chat-panel">
+          <div id="messages" class="messages"></div>
+          <div class="composer-wrap">
+            <div id="drop-zone" class="drop-zone">
+              <div>
+                <strong>Drop files here</strong>
+                <span>Images and videos go to the VLM. PDFs are parsed into text plus page or figure visuals for retrieval.</span>
+              </div>
+            </div>
+            <div id="file-list" class="file-list"></div>
+            <label class="composer">
+              <textarea id="prompt" placeholder="Ask something, reference a local path, or say Obliviate to reset memory."></textarea>
+              <div class="composer-actions">
+                <div class="composer-tools">
+                  <label class="attach">
+                    <input id="file-input" type="file" multiple />
+                    Attach files
+                  </label>
+                  <div class="web-mode-control">
+                    <span class="web-mode-caption">Internet</span>
+                    <div id="web-mode-toggle" class="web-mode-toggle mode-auto" role="radiogroup" aria-label="Internet policy for this message">
+                      <span class="web-mode-thumb" aria-hidden="true"></span>
+                      <button type="button" class="web-mode-option" data-web-mode="off" role="radio" aria-checked="false">No Internet</button>
+                      <button type="button" class="web-mode-option is-selected" data-web-mode="auto" role="radio" aria-checked="true">Auto</button>
+                      <button type="button" class="web-mode-option" data-web-mode="always" role="radio" aria-checked="false">Searching the Web</button>
+                    </div>
+                  </div>
+                </div>
+                <button id="send-button">Send</button>
+              </div>
+            </label>
+          </div>
+        </section>
+      </section>
+
+      <section id="api-view" class="view">
+        <section class="api-workspace">
+          <div class="panel api-shell">
+            <div class="api-shell-header">
+              <div>
+                <p class="eyebrow">Reusable API Workflows</p>
+                <h2>API Calls</h2>
+                <p class="subtle">Build reusable calls, attach an internet policy, and invoke them with bearer-style keys.</p>
+              </div>
+              <div class="api-shell-tabs">
+                <button id="api-builder-tab" class="api-tab active" type="button">API Call Builder</button>
+                <button id="api-keys-tab" class="api-tab" type="button">Existing API Keys</button>
+              </div>
+            </div>
+
+            <div id="api-builder-screen" class="api-screen active">
+              <div class="api-builder-layout">
+                <div class="panel api-editor">
+                  <div class="api-editor-header">
+                    <div>
+                      <p class="eyebrow">Builder</p>
+                      <h2 id="api-form-title">Setup New API Call</h2>
+                    </div>
+                    <span id="api-form-badge" class="badge muted">Draft</span>
+                  </div>
+                  <p id="api-form-status" class="subtle">Save a reusable API call definition and Anveshak will generate a dedicated key for it.</p>
+
+                  <div id="api-key-box" class="api-key-box hidden">
+                    <div class="api-key-box-header">
+                      <span class="api-key-label">API Key</span>
+                      <div class="api-key-inline-actions">
+                        <button id="api-copy-key" class="ghost" type="button">Copy key</button>
+                        <button id="api-open-key-docs" class="ghost" type="button">How to use it</button>
+                      </div>
+                    </div>
+                    <code id="api-key-value"></code>
+                  </div>
+
+                  <label class="field">
+                    <span>Name</span>
+                    <input id="api-name" type="text" placeholder="Paper extraction pipeline" />
+                  </label>
+
+                  <div class="api-runtime-fields">
+                    <label class="field">
+                      <span>Saved Model Snapshot</span>
+                      <input id="api-model" type="text" readonly />
+                    </label>
+
+                    <label class="field">
+                      <span>Saved Embedding Snapshot</span>
+                      <input id="api-embedding-model" type="text" readonly />
+                    </label>
+                  </div>
+
+                  <label class="field">
+                    <span>System Prompt</span>
+                    <textarea id="api-system-prompt" placeholder="You are a structured extraction assistant..."></textarea>
+                  </label>
+
+                  <label class="field">
+                    <span>Input Template</span>
+                    <textarea id="api-input-template" placeholder="User input:\n{{input}}\n\nVariables:\n{{json}}"></textarea>
+                  </label>
+
+                  <label class="field">
+                    <span>Response Instructions</span>
+                    <textarea id="api-response-instructions" placeholder="Return strict JSON with keys title, summary, and citations."></textarea>
+                  </label>
+
+                  <label class="field">
+                    <span>Response Mode</span>
+                    <select id="api-response-mode">
+                      <option value="text">text</option>
+                      <option value="json">json</option>
+                    </select>
+                  </label>
+
+                  <div class="field">
+                    <span>Internet Policy</span>
+                    <div id="api-web-mode-toggle" class="web-mode-toggle mode-auto" role="radiogroup" aria-label="Internet policy for this API call">
+                      <span class="web-mode-thumb" aria-hidden="true"></span>
+                      <button type="button" class="web-mode-option" data-web-mode="off" role="radio" aria-checked="false">No Internet</button>
+                      <button type="button" class="web-mode-option is-selected" data-web-mode="auto" role="radio" aria-checked="true">Auto</button>
+                      <button type="button" class="web-mode-option" data-web-mode="always" role="radio" aria-checked="false">Searching the Web</button>
+                    </div>
+                    <p class="subtle">This setting controls whether the API call is blocked from web retrieval, decides automatically, or always searches and verifies first.</p>
+                  </div>
+
+                  <div class="api-segmented-grid">
+                    <div class="field">
+                      <span>User Context</span>
+                      <div id="api-user-context-toggle" class="segmented-toggle mode-off" role="radiogroup" aria-label="Use remembered user context for this API call">
+                        <span class="segmented-thumb" aria-hidden="true"></span>
+                        <button type="button" class="segmented-option is-selected" data-boolean-mode="off" role="radio" aria-checked="true">Ignore User Context</button>
+                        <button type="button" class="segmented-option" data-boolean-mode="on" role="radio" aria-checked="false">Use User Context</button>
+                      </div>
+                      <p class="subtle">Turn this on only if the API call should use what Anveshak has already learned from the user's past conversations.</p>
+                    </div>
+
+                    <div class="field">
+                      <span>Invocation Memory</span>
+                      <div id="api-instance-mode-toggle" class="segmented-toggle mode-off" role="radiogroup" aria-label="Remember prior invocations for this API call">
+                        <span class="segmented-thumb" aria-hidden="true"></span>
+                        <button type="button" class="segmented-option is-selected" data-instance-mode="independent" role="radio" aria-checked="true">Independent</button>
+                        <button type="button" class="segmented-option" data-instance-mode="remember" role="radio" aria-checked="false">Remember Calls</button>
+                      </div>
+                      <p class="subtle">Independent treats every request as a fresh instance. Remember Calls preserves this API call's own prior invocations.</p>
+                    </div>
+                  </div>
+
+                  <div class="api-actions">
+                    <button id="save-api-call" type="button">Save API Call</button>
+                    <button id="reset-api-form" class="ghost" type="button">Start Fresh</button>
+                  </div>
+                </div>
+
+                <aside class="api-side-panel">
+                  <div class="panel api-side-card">
+                    <p class="eyebrow">Current Runtime</p>
+                    <div class="api-runtime-list">
+                      <div class="api-runtime-item">
+                        <span>Reasoning model</span>
+                        <strong id="api-current-model">Waiting for runtime...</strong>
+                      </div>
+                      <div class="api-runtime-item">
+                        <span>Embedding model</span>
+                        <strong id="api-current-embedding">Waiting for runtime...</strong>
+                      </div>
+                      <div class="api-runtime-item">
+                        <span>Docs</span>
+                        <strong><code id="api-docs-path">./Documentations/API_CALLS.md</code></strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="panel api-side-card">
+                    <p class="eyebrow">Invocation Preview</p>
+                    <div class="api-preview-grid">
+                      <div>
+                        <span class="api-preview-label">Endpoint</span>
+                        <code id="api-invoke-endpoint">POST /v1/api-calls/&lt;call_id&gt;/invoke</code>
+                      </div>
+                      <div>
+                        <span class="api-preview-label">GitHub docs</span>
+                        <a id="api-docs-link" href="https://github.com/shashankskagnihotri/Anveshak_Console/blob/main/Documentations/API_CALLS.md" target="_blank" rel="noreferrer">Open documentation</a>
+                      </div>
+                    </div>
+                    <pre id="api-curl-preview" class="api-code-preview"></pre>
+                  </div>
+                </aside>
+              </div>
+            </div>
+
+            <div id="api-keys-screen" class="api-screen">
+              <div class="api-keys-header">
+                <div>
+                  <p class="eyebrow">Existing API Keys</p>
+                  <h2>All Existing API Keys</h2>
+                  <p class="subtle">Review saved workflows, copy their keys, jump back into the builder, or delete stale keys after checking exactly what they do.</p>
+                </div>
+                <button id="api-create-from-keys" class="ghost" type="button">Create New API Call</button>
+              </div>
+              <div id="api-key-summary" class="api-key-summary"></div>
+              <div id="api-call-list" class="api-call-list api-keys-list"></div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <div id="api-key-modal" class="modal-overlay hidden">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">API Key Ready</p>
+            <h2>Use This API Key</h2>
+          </div>
+          <button class="modal-close ghost" type="button" data-close-modal="api-key-modal">Close</button>
+        </div>
+        <p class="subtle">This is the key you will use to invoke the saved API call. The documentation below explains the request format, how to delete old keys, and how the builder works.</p>
+        <div class="modal-key-row">
+          <code id="api-key-modal-value"></code>
+          <button id="api-key-modal-copy" type="button">Copy key</button>
+        </div>
+        <div class="modal-links">
+          <a id="api-key-modal-docs-link" href="https://github.com/shashankskagnihotri/Anveshak_Console/blob/main/Documentations/API_CALLS.md" target="_blank" rel="noreferrer">GitHub documentation</a>
+          <code id="api-key-modal-docs-path">./Documentations/API_CALLS.md</code>
+        </div>
+        <pre id="api-key-modal-curl" class="api-code-preview"></pre>
+      </div>
+    </div>
+
+    <div id="api-delete-modal" class="modal-overlay hidden">
+      <div class="modal-card modal-card-small">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Delete API Key</p>
+            <h2>Confirm deletion</h2>
+          </div>
+          <button class="modal-close ghost" type="button" data-close-modal="api-delete-modal">Close</button>
+        </div>
+        <p id="api-delete-warning" class="api-delete-warning">Are you sure you want to delete this API key and its saved API-call configuration?</p>
+        <div id="api-delete-preview" class="api-delete-preview"></div>
+        <div class="api-actions">
+          <button id="api-delete-confirm" class="danger" type="button">Delete API Key</button>
+          <button id="api-delete-cancel" class="ghost" type="button" data-close-modal="api-delete-modal">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

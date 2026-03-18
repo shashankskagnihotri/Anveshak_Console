@@ -12,10 +12,51 @@ license = { text = "AGPL-3.0-or-later" }
 authors = [
   { name = "Sagnik + Codex" }
 ]
-dependencies = []
+dependencies = [
+  "accelerate",
+  "aiofiles",
+  "ddgs",
+  "decord",
+  "einops",
+  "faiss-cpu",
+  "fastapi",
+  "gptqmodel>=5.7.0,<5.9",
+  "huggingface-hub",
+  "httpx",
+  "numpy",
+  "openpyxl",
+  "optimum",
+  "orjson",
+  "pillow",
+  "psutil",
+  "PyMuPDF",
+  "python-docx",
+  "python-multipart",
+  "python-pptx",
+  "qwen-vl-utils",
+  "rich",
+  "safetensors",
+  "sentence-transformers",
+  "sentencepiece",
+  "timm",
+  "torch",
+  "torchvision",
+  "tqdm",
+  "trafilatura",
+  "transformers==5.3.0",
+  "uvicorn[standard]",
+]
+
+[project.optional-dependencies]
+test = [
+  "pytest",
+]
+
+[project.scripts]
+anveshak = "anveshak.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["qwen_indexing*"]
+include = ["anveshak*"]
 
 [tool.setuptools.package-data]
-qwen_indexing = ["static/*"]
+anveshak = ["static/*"]

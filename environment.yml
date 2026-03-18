@@ -1,4 +1,4 @@
-name: qwen_index
+name: anveshak
 channels:
   - defaults
 dependencies:
