@@ -13,6 +13,7 @@ let runtimeReconnectTimer = null;
 let editingApiCallId = null;
 let currentWebMode = "auto";
 let currentApiWebMode = "auto";
+let currentThemePreference = "system";
 let apiUseUserContext = false;
 let apiInstanceMode = "independent";
 let runtimeStatusSnapshot = null;
@@ -22,6 +23,8 @@ const pendingFiles = [];
 
 const API_DOCS_LOCAL_PATH = "./Documentations/API_CALLS.md";
 const API_DOCS_GITHUB_URL = "https://github.com/shashankskagnihotri/Anveshak_Console/blob/main/Documentations/API_CALLS.md";
+const THEME_STORAGE_KEY = "anveshak-theme-preference";
+const systemThemeQuery = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 
 const runtimeOverlayEl = document.getElementById("runtime-overlay");
 const runtimeMessageEl = document.getElementById("runtime-message");
@@ -34,6 +37,8 @@ const runtimeSummaryEl = document.getElementById("runtime-summary");
 
 const chatViewEl = document.getElementById("chat-view");
 const apiViewEl = document.getElementById("api-view");
+const themeToggleEl = document.getElementById("theme-toggle");
+const themeOptionEls = Array.from(themeToggleEl?.querySelectorAll(".theme-option") || []);
 const homeButtonEl = document.getElementById("home-button");
 const newApiCallEl = document.getElementById("new-api-call");
 const existingApiCallsEl = document.getElementById("existing-api-calls");
@@ -109,6 +114,56 @@ async function ensureSession() {
 function normalizeWebMode(mode) {
   if (mode === "off" || mode === "always") return mode;
   return "auto";
+}
+
+function normalizeThemePreference(mode) {
+  if (mode === "light" || mode === "night") return mode;
+  return "system";
+}
+
+function resolveTheme(preference) {
+  const normalizedPreference = normalizeThemePreference(preference);
+  if (normalizedPreference !== "system") return normalizedPreference;
+  return systemThemeQuery?.matches ? "night" : "light";
+}
+
+function persistThemePreference(preference) {
+  try {
+    window.localStorage.setItem(THEME_STORAGE_KEY, preference);
+  } catch (error) {
+    // Ignore storage failures and keep the active in-memory preference.
+  }
+}
+
+function loadThemePreference() {
+  try {
+    return normalizeThemePreference(window.localStorage.getItem(THEME_STORAGE_KEY));
+  } catch (error) {
+    return "system";
+  }
+}
+
+function applyThemePreference(preference, persist = true) {
+  currentThemePreference = normalizeThemePreference(preference);
+  const resolvedTheme = resolveTheme(currentThemePreference);
+
+  document.documentElement.dataset.themePreference = currentThemePreference;
+  document.documentElement.dataset.theme = resolvedTheme;
+
+  if (themeToggleEl) {
+    themeToggleEl.classList.remove("mode-light", "mode-system", "mode-night");
+    themeToggleEl.classList.add(`mode-${currentThemePreference}`);
+  }
+
+  themeOptionEls.forEach((option) => {
+    const selected = option.dataset.themeMode === currentThemePreference;
+    option.classList.toggle("is-selected", selected);
+    option.setAttribute("aria-checked", String(selected));
+  });
+
+  if (persist) {
+    persistThemePreference(currentThemePreference);
+  }
 }
 
 function applyTriModeToggle(containerEl, optionEls, mode) {
@@ -973,6 +1028,9 @@ resetApiFormEl.addEventListener("click", resetApiForm);
 webModeOptionEls.forEach((option) => {
   option.addEventListener("click", () => applyWebMode(option.dataset.webMode));
 });
+themeOptionEls.forEach((option) => {
+  option.addEventListener("click", () => applyThemePreference(option.dataset.themeMode));
+});
 apiWebModeOptionEls.forEach((option) => {
   option.addEventListener("click", () => applyApiWebMode(option.dataset.webMode));
 });
@@ -1022,6 +1080,21 @@ fileInputEl.addEventListener("change", () => {
   fileInputEl.value = "";
 });
 
+if (systemThemeQuery) {
+  const handleSystemThemeChange = () => {
+    if (currentThemePreference === "system") {
+      applyThemePreference("system", false);
+    }
+  };
+
+  if (typeof systemThemeQuery.addEventListener === "function") {
+    systemThemeQuery.addEventListener("change", handleSystemThemeChange);
+  } else if (typeof systemThemeQuery.addListener === "function") {
+    systemThemeQuery.addListener(handleSystemThemeChange);
+  }
+}
+
+applyThemePreference(loadThemePreference(), false);
 applyWebMode(currentWebMode);
 applyApiWebMode(currentApiWebMode);
 applyUserContextToggle(apiUseUserContext);

@@ -44,6 +44,58 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <div id="theme-toggle" class="theme-toggle mode-system" role="radiogroup" aria-label="Color theme">
+          <span class="theme-thumb" aria-hidden="true"></span>
+          <button
+            type="button"
+            class="theme-option"
+            data-theme-mode="light"
+            data-tooltip="Light theme"
+            role="radio"
+            aria-checked="false"
+            aria-label="Light theme"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="4"></circle>
+              <path d="M12 2.5v2.25"></path>
+              <path d="M12 19.25v2.25"></path>
+              <path d="m5.28 5.28 1.6 1.6"></path>
+              <path d="m17.12 17.12 1.6 1.6"></path>
+              <path d="M2.5 12h2.25"></path>
+              <path d="M19.25 12h2.25"></path>
+              <path d="m5.28 18.72 1.6-1.6"></path>
+              <path d="m17.12 6.88 1.6-1.6"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="theme-option is-selected"
+            data-theme-mode="system"
+            data-tooltip="System theme"
+            role="radio"
+            aria-checked="true"
+            aria-label="System theme"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="11" rx="2"></rect>
+              <path d="M9 20h6"></path>
+              <path d="M12 16v4"></path>
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="theme-option"
+            data-theme-mode="night"
+            data-tooltip="Night theme"
+            role="radio"
+            aria-checked="false"
+            aria-label="Night theme"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M18.2 14.6A7.8 7.8 0 1 1 9.4 5.8a6.1 6.1 0 1 0 8.8 8.8z"></path>
+            </svg>
+          </button>
+        </div>
         <button id="home-button" class="nav-button">Home</button>
         <div class="menu-wrap">
           <button class="nav-button">API Calls</button>
