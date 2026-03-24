@@ -1343,6 +1343,46 @@ textarea {
   width: min(680px, 100%);
 }
 
+.huggingface-token-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.huggingface-token-helper {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.huggingface-token-tip {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.huggingface-token-tip span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.huggingface-token-tip code {
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.huggingface-token-links {
+  margin: 16px 0 18px;
+}
+
 .api-delete-warning {
   color: var(--danger);
   font-weight: 600;
@@ -1486,7 +1526,9 @@ textarea {
 
   .api-builder-layout,
   .api-runtime-fields,
-  .api-segmented-grid {
+  .api-segmented-grid,
+  .huggingface-token-summary,
+  .huggingface-token-helper {
     grid-template-columns: 1fr;
   }
 }

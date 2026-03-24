@@ -46,6 +46,14 @@ def build_app(config: RuntimeConfig, service: ChatService) -> FastAPI:
     async def runtime_status() -> JSONResponse:
         return JSONResponse(service.runtime_status())
 
+    @app.post("/api/runtime/huggingface-token")
+    async def configure_huggingface_token(payload: dict) -> JSONResponse:
+        token = str(payload.get("token") or "")
+        try:
+            return JSONResponse(service.configure_huggingface_token(token))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.get("/api/runtime/events")
     async def runtime_events() -> StreamingResponse:
         async def event_stream():

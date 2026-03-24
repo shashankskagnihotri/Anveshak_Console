@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from ..api_calls import APICallConfig, APICallManager
 from ..config import RuntimeConfig
 from ..events import RunHandle
-from ..file_parsers import detect_media_kind, extract_text_from_path, parse_document_for_chat
+from ..file_parsers import detect_media_kind, extract_text_from_path, parse_document_for_chat, sample_video_frames_for_chat
 from ..model_catalog import get_model_profile
 from ..run_logging import RunLogger
 from ..runtime import RuntimeManager
@@ -106,13 +106,16 @@ class ChatService:
             while not self.runtime.wait_until_ready(timeout=0.5):
                 continue
             status = self.runtime.status_dict()
-            if status.get("phase") == "error":
+            if status.get("phase") in {"error", "auth-required"}:
                 return
             self._ensure_components()
             if self.runner is not None:
                 self.runner.load()
         except Exception:
             return
+        finally:
+            with self._prewarm_lock:
+                self._prewarm_started = False
 
     def _start_model_load(self, handle: RunHandle | None = None) -> Thread | None:
         """Kick off model loading early so it can overlap retrieval work."""
@@ -216,6 +219,13 @@ class ChatService:
         """Return the current checkpoint/runtime preparation status."""
 
         return self.runtime.status_dict()
+
+    def configure_huggingface_token(self, token: str) -> dict[str, Any]:
+        """Accept a Hugging Face token from the UI and retry runtime preparation."""
+
+        payload = self.runtime.configure_huggingface_token(token)
+        self._start_background_prewarm()
+        return payload
 
     def wait_for_runtime_status_change(self, last_version: int, timeout: float | None = None) -> dict[str, Any] | None:
         """Block until a newer runtime status payload is available."""
@@ -456,7 +466,7 @@ class ChatService:
                     run_logger.record_note("attempt_started", {"attempt": attempt})
                 # Each restart pulls in any newly queued steering notes before retrieval and generation.
                 steering_notes = handle.consume_steering_notes()
-                recent = session.recent_messages(self.config.max_recent_turns)
+                recent = _prior_recent_messages_for_current_turn(session, self.config.max_recent_turns)
                 memory_chunks = self.memory.retrieve(text, self.config.memory_top_k) if self.memory is not None else []
                 direct_paths = self.workspace_index.extract_path_mentions(text) if self.workspace_index is not None else []
                 direct_file_chunks = self.workspace_index.direct_path_context(direct_paths) if self.workspace_index is not None else []
@@ -783,6 +793,16 @@ def _merge_chunks(*chunk_groups, limit: int) -> list:
     return merged
 
 
+def _prior_recent_messages_for_current_turn(session: ChatSession, count: int) -> list[ChatMessage]:
+    """Return prior conversation only, excluding the newest user turn being answered now."""
+
+    if count <= 0:
+        return []
+    if not session.messages:
+        return []
+    return session.messages[:-1][-count:]
+
+
 def _prepare_attachment_context(
     attachments: list[Attachment],
     profile: dict[str, Any],
@@ -799,6 +819,8 @@ def _prepare_attachment_context(
     unsupported_videos: list[str] = []
     unsupported_binary: list[str] = []
     parser_document_names: list[str] = []
+    sampled_video_names: list[str] = []
+    failed_video_fallbacks: list[str] = []
 
     for attachment in attachments:
         if attachment.media_kind == "image":
@@ -811,6 +833,28 @@ def _prepare_attachment_context(
         if attachment.media_kind == "video":
             if profile.get("supports_video"):
                 accepted.append(attachment)
+            elif profile.get("supports_images"):
+                try:
+                    frame_paths = sample_video_frames_for_chat(
+                        Path(attachment.path),
+                        cache_root=config.cache_dir / "video_frame_payloads",
+                    )
+                except Exception:
+                    frame_paths = []
+
+                if frame_paths:
+                    sampled_video_names.append(f"{attachment.name} ({len(frame_paths)} sampled frames)")
+                    for frame_path in frame_paths:
+                        accepted.append(
+                            Attachment.from_path(
+                                frame_path,
+                                media_kind="image",
+                                source=f"video-fallback:{attachment.name}",
+                            )
+                        )
+                else:
+                    unsupported_videos.append(attachment.name)
+                    failed_video_fallbacks.append(attachment.name)
             else:
                 unsupported_videos.append(attachment.name)
             continue
@@ -868,6 +912,14 @@ def _prepare_attachment_context(
     if unsupported_videos:
         warnings.append(
             f'Warning: the chosen model "{model_label}" does not support video attachments natively for: {", ".join(unsupported_videos)}.'
+        )
+    if sampled_video_names:
+        warnings.append(
+            f'Warning: the chosen model "{model_label}" does not support video attachments natively, so Anveshak sampled fallback image frames from: {", ".join(sampled_video_names)}. Important moments may fall between sampled frames, so video-based answers can be incomplete or unreliable.'
+        )
+    if failed_video_fallbacks:
+        warnings.append(
+            f'Warning: Anveshak could not extract fallback frames from: {", ".join(failed_video_fallbacks)}. Those video attachments were not sent to the model.'
         )
     if parser_document_names and profile.get("kind") == "text-generation":
         warnings.append(

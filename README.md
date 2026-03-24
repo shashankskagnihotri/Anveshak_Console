@@ -37,6 +37,7 @@ Serious research work often involves unpublished notes, drafts, PDFs, experiment
 - Unlocks the chat as soon as the answer is finished, while long-term memory compression continues safely in the background.
 - Ships as an installable Python package with the `anveshak` command.
 - Writes per-run structured logs in `logs/` and starts reproducibly with `--seed`.
+- Automatically checks `HUGGINGFACE_HUB_TOKEN` for gated Hugging Face models and, if a gated download still needs auth, prompts for the token in the browser UI instead of hard-failing silently.
 
 ## How It Works
 
@@ -61,14 +62,15 @@ The system is practical because the model is not left alone with only its weight
 
 1. Attachments are normalized and classified as images, videos, documents, or unsupported binary files.
 2. Documents are parsed into text and, when supported, extracted visuals or page previews.
-3. Local files are indexed into the workspace retrieval store.
-4. Explicit local paths mentioned in the prompt are pulled into the highest-priority file context.
-5. Long-term memory notes are retrieved from `context_window/memory/`.
-6. The system decides whether to use the internet, or follows the user's explicit web-mode choice.
-7. Active web retrieval gathers fresh evidence, chunks it, embeds it, and ranks it.
-8. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
-9. The answer streams back to the UI with citations.
-10. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
+3. Video-capable models receive native video attachments, while image-only multimodal models receive a sampled set of fallback video frames with a reliability warning in chat.
+4. Local files are indexed into the workspace retrieval store.
+5. Explicit local paths mentioned in the prompt are pulled into the highest-priority file context.
+6. Long-term memory notes are retrieved from `context_window/memory/`.
+7. The system decides whether to use the internet, or follows the user's explicit web-mode choice.
+8. Active web retrieval gathers fresh evidence, chunks it, embeds it, and ranks it.
+9. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
+10. The answer streams back to the UI with citations.
+11. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
 
 This split is important: the recent conversation is available immediately through the normal context window, while the durable memory note is written asynchronously so the next turn does not have to wait.
 
@@ -104,6 +106,27 @@ Notes:
 - `einops`, `timm`, and `torchvision` are part of the supported multimodal dependency set and should be installed before trying InternVL, LLaVA, or similar VLM checkpoints.
 - `gptqmodel` may compile extensions during install or first use.
 - `PyMuPDF` is used for PDF text and visual extraction.
+
+### Hugging Face Tokens For Gated Models
+
+Most users do not need a Hugging Face token. Public checkpoints continue to work without one.
+
+If you choose a gated or private Hugging Face model, Anveshak now checks `HUGGINGFACE_HUB_TOKEN` automatically during runtime preparation and uses it if it is available. `HF_TOKEN`, `HUGGINGFACE_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, and `HUGGING_FACE_TOKEN` are treated as the same token too. If a gated model still cannot be accessed, the browser UI opens a token prompt with a retry button and links to Hugging Face's token-creation instructions.
+
+Current shell only:
+
+```bash
+export HUGGINGFACE_HUB_TOKEN=hf_...
+```
+
+Persistent bash setup:
+
+```bash
+echo 'export HUGGINGFACE_HUB_TOKEN=hf_...' >> ~/.bashrc
+source ~/.bashrc
+```
+
+If you already authenticate with `hf auth login`, Anveshak still honors that path too. The documented primary env var in this project is `HUGGINGFACE_HUB_TOKEN`, but the standard `HF_TOKEN` and the compatibility aliases above are treated equivalently.
 
 ## Run
 
@@ -186,6 +209,7 @@ Included model options:
 - `llava-hf/llava-onevision-qwen2-72b-ov-hf`
 - `llava-hf/LLaVA-NeXT-Video-34B-hf`
 - `moonshotai/Kimi-K2-Instruct`
+- `miromind-ai/MiroThinker-1.7`
 - `deepseek-ai/deepseek-vl2`
 - `swiss-ai/Apertus-70B-Instruct-2509`
 
@@ -201,6 +225,7 @@ Model reference:
 | LLaVA OneVision 72B | open | 136.32 GiB | text, image |
 | LLaVA NeXT Video 34B | open | 64.74 GiB | text, image, video |
 | Kimi K2 Instruct | open | 958.52 GiB | text |
+| MiroThinker 1.7 | open | 437.91 GiB | text |
 | DeepSeek VL2 | open | 51.19 GiB | text, image |
 | Apertus 70B | open | 131.52 GiB | text |
 
@@ -268,7 +293,9 @@ python -m compileall main.py anveshak tests
 - The main prompt box stays editable while a run is active, but `Send` stays inactive until another prompt is allowed.
 - Steering is enabled only while the assistant is actively generating an answer.
 - The browser chat can show steering notes inline under the user message that they modified.
-- Images and videos are passed directly to multimodal models when the selected backend supports them.
+- Images are passed directly to multimodal models when the selected backend supports them.
+- Video-capable models receive videos directly, while image-capable but video-incapable models receive a sampled set of fallback frames as image attachments.
+- When that fallback happens, the chat warns that important moments may be missed between sampled frames, so video-based answers may be unreliable.
 - PDFs are parsed with PyMuPDF into text plus extracted visuals or page previews.
 - Text-like and office-style documents are parsed into retrieval context.
 - Text-only models receive parsed document text instead of fake multimodal attachments.
@@ -343,6 +370,7 @@ The default 122B GPTQ path is intentionally ambitious for a single-node H100 set
 - If `--n_GPUs` is omitted, Anveshak uses all GPUs visible to the current process.
 - If `--n_GPUs` is provided, Anveshak limits the runtime to that many visible GPUs on the current node.
 - `moonshotai/Kimi-K2-Instruct` is best treated as a dedicated served backend rather than a generic in-process Hugging Face load path.
+- `miromind-ai/MiroThinker-1.7` is supported as a local text model, but its official Hugging Face checkpoint is extremely large and typically needs unusually strong hardware or an external serving strategy.
 
 The runtime overlay and per-run logs are meant to make those costs visible instead of opaque.
 

@@ -37,12 +37,19 @@ from ..utils import compact_whitespace, extract_json_object
 SYSTEM_PROMPT = """You are Anveshak Console, a private multimodal research assistant with local memory and live retrieval.
 
 Always ground your answer using the supplied context in this priority order:
-1. Explicit user attachments and directly referenced local files.
-2. Active web evidence.
-3. Long-term memory notes.
-4. Recent conversation history.
+1. The latest user request for this run.
+2. This turn's explicit attachments and directly referenced local files.
+3. Retrieved local file context relevant to the latest request.
+4. Active web evidence.
+5. Long-term memory notes, only when directly relevant.
+6. Prior conversation history, only when directly relevant.
 
 Rules:
+- Solve the newest user request first.
+- Treat long-term memory and old conversation as supporting background, not as the main task.
+- Never let stale memory, previous goals, or prior assumptions override the current request, current files, or newer evidence.
+- If the latest request conflicts with older memory or prior conversation, follow the latest request and mention the conflict if it materially matters.
+- If files are attached for this turn, inspect and use them before leaning on background memory.
 - Cite sources inline as [F#], [W#], or [M#] when you rely on them.
 - If evidence is missing or conflicting, say so clearly.
 - Do not invent web citations that were not provided.
@@ -418,6 +425,7 @@ Previous output:
             self.load()
             prompt = self._compose_answer_prompt(
                 user_query=user_query,
+                attachments=attachments,
                 memory_chunks=memory_chunks,
                 file_chunks=file_chunks,
                 web_chunks=web_chunks,
@@ -497,28 +505,57 @@ Previous output:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    def _render_recent_messages(self, messages: Iterable[ChatMessage]) -> str:
+    def _render_recent_messages(
+        self,
+        messages: Iterable[ChatMessage],
+        *,
+        max_messages: int | None = None,
+        max_chars_per_message: int = 1200,
+    ) -> str:
         """Render the recent transcript into a prompt-friendly text block."""
 
         rendered: list[str] = []
-        for message in messages:
-            rendered.append(f"{message.role.upper()}: {compact_whitespace(message.text)}")
+        items = list(messages)
+        if max_messages is not None and max_messages > 0:
+            items = items[-max_messages:]
+        for message in items:
+            rendered.append(
+                f"{message.role.upper()}: {compact_whitespace(message.text)[:max_chars_per_message]}"
+            )
         return "\n".join(rendered) if rendered else "(none)"
 
-    def _render_chunks(self, chunks: list[RetrievedChunk]) -> str:
+    def _render_chunks(
+        self,
+        chunks: list[RetrievedChunk],
+        *,
+        max_chunks: int | None = None,
+        max_chars_per_chunk: int = 1200,
+    ) -> str:
         """Render retrieved evidence chunks into one prompt section."""
 
         if not chunks:
             return "(none)"
         lines: list[str] = []
-        for chunk in chunks:
-            lines.append(f"{chunk.source_id} {chunk.label}: {compact_whitespace(chunk.text)[:1200]}")
+        items = chunks[:max_chunks] if max_chunks is not None else chunks
+        for chunk in items:
+            lines.append(f"{chunk.source_id} {chunk.label}: {compact_whitespace(chunk.text)[:max_chars_per_chunk]}")
         return "\n\n".join(lines)
+
+    def _render_attachment_summary(self, attachments: list[Attachment], *, max_items: int = 8) -> str:
+        """Render the current-turn attachments into a short focus summary."""
+
+        if not attachments:
+            return "(none)"
+        lines = [f"- {attachment.name} ({attachment.media_kind})" for attachment in attachments[:max_items]]
+        if len(attachments) > max_items:
+            lines.append(f"- ... and {len(attachments) - max_items} more attachment(s)")
+        return "\n".join(lines)
 
     def _compose_answer_prompt(
         self,
         *,
         user_query: str,
+        attachments: list[Attachment],
         memory_chunks: list[RetrievedChunk],
         file_chunks: list[RetrievedChunk],
         web_chunks: list[RetrievedChunk],
@@ -528,24 +565,41 @@ Previous output:
         """Assemble the grounded answer prompt from every retrieval source."""
 
         steering_block = "\n".join(f"- {note}" for note in steering_notes) if steering_notes else "(none)"
+        attachment_summary = self._render_attachment_summary(attachments)
+        file_context = self._render_chunks(file_chunks, max_chunks=self.config.file_top_k, max_chars_per_chunk=1200)
+        web_context = self._render_chunks(web_chunks, max_chunks=self.config.web_top_k, max_chars_per_chunk=900)
+        recent_context = self._render_recent_messages(recent_messages, max_messages=4, max_chars_per_message=500)
+        memory_context = self._render_chunks(memory_chunks, max_chunks=3, max_chars_per_chunk=420)
         return f"""
-User request:
+Primary task for this answer (highest priority):
 {user_query}
+
+Task focus rules:
+- Answer the latest user request above.
+- Start from this turn's attachments and local file context before using background memory.
+- Use long-term memory only when it directly helps with the current task.
+- Ignore stale or unrelated background context.
+
+Attachments for this turn:
+{attachment_summary}
 
 Steering notes received while thinking:
 {steering_block}
 
-Recent conversation:
-{self._render_recent_messages(recent_messages)}
+Local file context for this task:
+{file_context}
 
-Long-term memory:
-{self._render_chunks(memory_chunks)}
+Active web evidence for this task:
+{web_context}
 
-Local file context:
-{self._render_chunks(file_chunks)}
+Prior conversation background (only if directly relevant):
+{recent_context}
 
-Active web evidence:
-{self._render_chunks(web_chunks)}
+Long-term memory background (supporting only, do not override the current task):
+{memory_context}
+
+Final focus reminder:
+Answer the latest user request for this run. Prefer the current task, current attachments, current local files, and newer evidence over older memory.
 """.strip()
 
     def _build_messages(

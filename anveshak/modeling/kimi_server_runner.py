@@ -1,4 +1,4 @@
-"""Dedicated Kimi backend that talks to a local OpenAI-compatible inference server."""
+"""OpenAI-compatible served-model backend used by Kimi and other server-hosted models."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .qwen_runner import GeneratedAnswer, QwenRunner, _ThinkParser
 
 
 class KimiServerRunner(QwenRunner):
-    """Run Kimi through a dedicated local server instead of the generic HF in-process path."""
+    """Run a server-hosted reasoning model instead of the generic HF in-process path."""
 
     def __init__(self, config) -> None:
         super().__init__(config)
@@ -28,7 +28,7 @@ class KimiServerRunner(QwenRunner):
         )
 
     def load(self) -> None:
-        """Wait for the dedicated Kimi server to become reachable."""
+        """Wait for the configured served-model endpoint to become reachable."""
 
         with self._load_lock:
             if self.model is not None:
@@ -40,14 +40,14 @@ class KimiServerRunner(QwenRunner):
                 try:
                     response = self._client.get("/models", headers=self._headers())
                     response.raise_for_status()
-                    self.model = {"backend": "kimi_server", "model": self.server_model_name}
+                    self.model = {"backend": "openai_compatible_server", "model": self.server_model_name}
                     self.last_used_at = time.time()
                     return
                 except Exception as exc:
                     last_error = str(exc)
                     time.sleep(0.5)
             raise RuntimeError(
-                "Dedicated Kimi server backend is not reachable. "
+                "Configured served-model backend is not reachable. "
                 f"Checked {self.base_url}/models for model `{self.server_model_name}`. "
                 f"Last error: {last_error or 'unknown error'}"
             )
@@ -60,7 +60,7 @@ class KimiServerRunner(QwenRunner):
         attachments: list[Attachment],
         max_new_tokens: int,
     ) -> str:
-        """Send one non-streaming chat completion request to the local Kimi server."""
+        """Send one non-streaming chat completion request to the served model."""
 
         with self._inference_lock:
             self.load()
@@ -84,12 +84,13 @@ class KimiServerRunner(QwenRunner):
         steering_notes: list[str],
         handle: RunHandle,
     ) -> GeneratedAnswer:
-        """Stream the main answer from the dedicated Kimi server."""
+        """Stream the main answer from the served backend."""
 
         with self._inference_lock:
             self.load()
             prompt = self._compose_answer_prompt(
                 user_query=user_query,
+                attachments=attachments,
                 memory_chunks=memory_chunks,
                 file_chunks=file_chunks,
                 web_chunks=web_chunks,
@@ -222,7 +223,7 @@ class KimiServerRunner(QwenRunner):
 
         if not url:
             raise RuntimeError(
-                "Kimi dedicated backend requires a server URL. "
+                "OpenAI-compatible served backend requires a server URL. "
                 "Pass --kimi-server-url or set ANVESHAK_KIMI_SERVER_URL."
             )
         stripped = url.rstrip("/")

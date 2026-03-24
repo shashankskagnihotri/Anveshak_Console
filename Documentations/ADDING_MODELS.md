@@ -19,6 +19,12 @@ Each entry in `MODEL_CATALOG` should include:
 - `supports_native_documents`
 - `notes`
 
+Optional fields when needed:
+
+- `preferred_runtime_backend`
+- `server_model_name`
+- `requires_server_backend`
+
 Example fields:
 
 - `kind`
@@ -42,6 +48,15 @@ Use:
 - `hf_multimodal`
   For multimodal Hugging Face processors that support `apply_chat_template(...)` or processor-driven media inputs.
 
+Optional runtime-backend metadata:
+
+- `preferred_runtime_backend`
+  Use this when the model should prefer a dedicated served backend over the default local loader.
+- `server_model_name`
+  Default model name to send to the OpenAI-compatible server when the served backend is used.
+- `requires_server_backend`
+  Use this for models that are intentionally exposed through Anveshak but are not downloadable local Hugging Face checkpoints.
+
 If your new model needs a new backend style, add it in:
 
 - `anveshak/modeling/qwen_runner.py`
@@ -51,6 +66,10 @@ You will usually need to update:
 - `_build_messages(...)`
 - `_prepare_inputs(...)`
 - a new backend-specific helper such as `_prepare_<backend>_inputs(...)`
+
+If the model is server-backed rather than locally downloadable, also verify the runtime gating in:
+
+- `anveshak/runtime.py`
 
 ## Step 3: Verify Modality Support
 

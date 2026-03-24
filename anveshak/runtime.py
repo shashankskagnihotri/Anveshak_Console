@@ -11,11 +11,23 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from huggingface_hub import HfApi, snapshot_download
+from huggingface_hub import HfApi, login, snapshot_download
+from huggingface_hub.errors import GatedRepoError, HfHubHTTPError
 from tqdm.auto import tqdm
 
 from .config import RuntimeConfig
 from .model_catalog import MODEL_CATALOG, get_model_profile
+
+
+HUGGINGFACE_TOKEN_ENV_VAR = "HUGGINGFACE_HUB_TOKEN"
+HUGGINGFACE_TOKEN_ALIAS_ENV_VARS = (
+    "HF_TOKEN",
+    "HUGGINGFACE_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "HUGGING_FACE_TOKEN",
+)
+HUGGINGFACE_TOKEN_GUIDE_URL = "https://huggingface.co/docs/hub/main/security-tokens"
+HUGGINGFACE_TOKEN_SETTINGS_URL = "https://huggingface.co/settings/tokens"
 
 
 def _slugify_model_id(model_id: str) -> str:
@@ -102,6 +114,9 @@ class RuntimeStatus:
     bytes_downloaded: int = 0
     ready: bool = False
     error: str = ""
+    huggingface_auth_required: bool = False
+    huggingface_auth_message: str = ""
+    huggingface_auth_model_id: str = ""
 
     @property
     def progress(self) -> float:
@@ -126,6 +141,8 @@ class RuntimeManager:
         self._status_version = 0
         self.status = RuntimeStatus()
         self.api = HfApi()
+        self._huggingface_token: str | None = None
+        self._huggingface_token_source: str = ""
 
     def start_async(self) -> None:
         """Spawn the background preparation thread if it is not already running."""
@@ -164,26 +181,92 @@ class RuntimeManager:
         """Download or resolve both reasoning and embedding model assets."""
 
         try:
-            self._update(phase="checking", message="Checking local model assets")
+            self._refresh_huggingface_token_from_environment()
+            self._update(
+                phase="checking",
+                message="Checking local model assets",
+                ready=False,
+                error="",
+                huggingface_auth_required=False,
+                huggingface_auth_message="",
+                huggingface_auth_model_id="",
+            )
             profile = get_model_profile(self.config.model_id)
-            if self.config.kimi_server_url and profile.get("preferred_runtime_backend") == "kimi_server":
+            if profile.get("preferred_runtime_backend") == "kimi_server" and self.config.kimi_server_url:
                 model_path = None
                 self._update(
                     phase="checking",
                     current_asset="assistant-model",
-                    message="Using the dedicated Kimi server backend",
-                    current_file="Skipping local Kimi checkpoint staging",
+                    message="Using the configured OpenAI-compatible served backend",
+                    current_file="Skipping local reasoning checkpoint staging",
+                )
+            elif profile.get("requires_server_backend"):
+                label = profile.get("label") or self.config.model_id
+                raise RuntimeError(
+                    f"{label} is configured as a server-backed reasoning model. "
+                    "Pass --kimi-server-url for an OpenAI-compatible endpoint and, if needed, "
+                    "--kimi-server-model for the served model name."
                 )
             else:
                 model_path = self._ensure_repo_downloaded(self.config.model_id, role="assistant-model")
             embedding_path = self._ensure_repo_downloaded(self.config.embedding_model_id, role="embedding-model")
             self.config.model_local_path = model_path
             self.config.embedding_local_path = embedding_path
-            self._update(phase="ready", message="Runtime is ready", ready=True, current_asset="", current_file="")
+            self._update(
+                phase="ready",
+                message="Runtime is ready",
+                ready=True,
+                current_asset="",
+                current_file="",
+                huggingface_auth_required=False,
+                huggingface_auth_message="",
+                huggingface_auth_model_id="",
+            )
+            self._ready_event.set()
+        except HuggingFaceAuthRequiredError as exc:
+            self._update(
+                phase="auth-required",
+                message=f"Hugging Face token required for {exc.label}",
+                current_asset=exc.role,
+                current_file="Waiting for Hugging Face token",
+                error=str(exc),
+                ready=False,
+                huggingface_auth_required=True,
+                huggingface_auth_message=exc.user_message,
+                huggingface_auth_model_id=exc.model_id,
+            )
             self._ready_event.set()
         except Exception as exc:
-            self._update(phase="error", message="Runtime preparation failed", error=str(exc), ready=False)
+            self._update(
+                phase="error",
+                message="Runtime preparation failed",
+                error=str(exc),
+                ready=False,
+                huggingface_auth_required=False,
+                huggingface_auth_message="",
+                huggingface_auth_model_id="",
+            )
             self._ready_event.set()
+
+    def configure_huggingface_token(self, token: str) -> dict[str, Any]:
+        """Accept a user token from the UI and retry runtime preparation."""
+
+        normalized = token.strip()
+        if not normalized:
+            raise ValueError("Enter a Hugging Face token before continuing.")
+        self._activate_huggingface_token(normalized, source="manual", validate=True, persist=True)
+        self._update(
+            phase="checking",
+            message="Hugging Face token accepted. Retrying checkpoint access",
+            current_file="Reconnecting to Hugging Face",
+            error="",
+            ready=False,
+            huggingface_auth_required=False,
+            huggingface_auth_message="",
+            huggingface_auth_model_id="",
+        )
+        self.start_async()
+        return self.status_dict()
 
     def _ensure_repo_downloaded(self, model_id: str, *, role: str) -> Path:
         """Resolve a local path for a model id, downloading it when required."""
@@ -201,12 +284,18 @@ class RuntimeManager:
             return self._resolve_runtime_repo(target_dir, model_id=model_id, role=role)
 
         self._update(phase="planning-download", current_asset=role, message=f"Preparing download for {model_id}")
-        dry_run = snapshot_download(
-            model_id,
-            local_dir=target_dir,
-            cache_dir=self.config.hf_cache_dir,
-            dry_run=True,
-        )
+        token = self._active_huggingface_token()
+        try:
+            dry_run = snapshot_download(
+                model_id,
+                local_dir=target_dir,
+                cache_dir=self.config.hf_cache_dir,
+                dry_run=True,
+                token=token,
+            )
+        except Exception as exc:
+            self._raise_if_huggingface_auth_required(exc, model_id=model_id, role=role)
+            raise
         total_bytes = 0
         files_total = 0
         for item in dry_run:
@@ -226,13 +315,18 @@ class RuntimeManager:
 
         tracker = _ProgressTracker(self, role=role)
         tracking_class = tracker.make_tqdm_class()
-        snapshot_download(
-            model_id,
-            local_dir=target_dir,
-            cache_dir=self.config.hf_cache_dir,
-            max_workers=4,
-            tqdm_class=tracking_class,
-        )
+        try:
+            snapshot_download(
+                model_id,
+                local_dir=target_dir,
+                cache_dir=self.config.hf_cache_dir,
+                max_workers=4,
+                tqdm_class=tracking_class,
+                token=token,
+            )
+        except Exception as exc:
+            self._raise_if_huggingface_auth_required(exc, model_id=model_id, role=role)
+            raise
 
         target_dir.mkdir(parents=True, exist_ok=True)
         complete_marker.write_text(model_id, encoding="utf-8")
@@ -412,8 +506,106 @@ class RuntimeManager:
         payload["model_id"] = self.config.model_id
         payload["embedding_model_id"] = self.config.embedding_model_id
         payload["checkpoints_dir"] = str(self.config.checkpoints_dir)
+        payload["huggingface_token_env_var"] = HUGGINGFACE_TOKEN_ENV_VAR
+        payload["huggingface_token_alias_env_var"] = HUGGINGFACE_TOKEN_ALIAS_ENV_VARS[0]
+        payload["huggingface_token_alias_env_vars"] = list(HUGGINGFACE_TOKEN_ALIAS_ENV_VARS)
+        payload["huggingface_token_guide_url"] = HUGGINGFACE_TOKEN_GUIDE_URL
+        payload["huggingface_token_settings_url"] = HUGGINGFACE_TOKEN_SETTINGS_URL
+        payload["huggingface_token_source"] = self._huggingface_token_source
         payload["available_models"] = MODEL_CATALOG
         return payload
+
+    def _refresh_huggingface_token_from_environment(self) -> None:
+        """Best-effort pickup of a token configured in the shell environment."""
+
+        if self._huggingface_token_source == "manual" and self._huggingface_token:
+            return
+
+        for env_name in (HUGGINGFACE_TOKEN_ENV_VAR, *HUGGINGFACE_TOKEN_ALIAS_ENV_VARS):
+            candidate = os.environ.get(env_name, "").strip()
+            if not candidate:
+                continue
+            if candidate == self._huggingface_token and self._huggingface_token_source == f"env:{env_name}":
+                return
+            self._activate_huggingface_token(candidate, source=f"env:{env_name}", validate=False, persist=True)
+            return
+
+    def _activate_huggingface_token(
+        self,
+        token: str,
+        *,
+        source: str,
+        validate: bool,
+        persist: bool,
+    ) -> None:
+        """Store one token for the current process and optionally persist it locally."""
+
+        normalized = token.strip()
+        if not normalized:
+            raise ValueError("Hugging Face tokens cannot be empty.")
+        if validate:
+            try:
+                self.api.whoami(token=normalized)
+            except Exception as exc:
+                raise ValueError(
+                    "That Hugging Face token could not be validated. Make sure it is a personal user token "
+                    "with access to the requested gated model."
+                ) from exc
+
+        self._huggingface_token = normalized
+        self._huggingface_token_source = source
+        os.environ[HUGGINGFACE_TOKEN_ENV_VAR] = normalized
+        for env_name in HUGGINGFACE_TOKEN_ALIAS_ENV_VARS:
+            os.environ[env_name] = normalized
+
+        if not persist:
+            return
+        try:
+            login(token=normalized, add_to_git_credential=False, skip_if_logged_in=False)
+        except Exception:
+            # The in-process token still works even if persistent login is unavailable.
+            return
+
+    def _active_huggingface_token(self) -> str | None:
+        """Return the current token if Anveshak has one available."""
+
+        if self._huggingface_token:
+            return self._huggingface_token
+        for env_name in (HUGGINGFACE_TOKEN_ENV_VAR, *HUGGINGFACE_TOKEN_ALIAS_ENV_VARS):
+            candidate = os.environ.get(env_name, "").strip()
+            if candidate:
+                return candidate
+        return None
+
+    def _raise_if_huggingface_auth_required(self, exc: Exception, *, model_id: str, role: str) -> None:
+        """Translate gated Hub failures into a browser-friendly auth prompt state."""
+
+        if isinstance(exc, GatedRepoError):
+            raise HuggingFaceAuthRequiredError(model_id=model_id, role=role) from exc
+
+        if isinstance(exc, HfHubHTTPError):
+            status_code = getattr(getattr(exc, "response", None), "status_code", None)
+            message = str(exc).lower()
+            if status_code in {401, 403} or "gated" in message or "authorization" in message:
+                raise HuggingFaceAuthRequiredError(model_id=model_id, role=role) from exc
+
+
+class HuggingFaceAuthRequiredError(RuntimeError):
+    """Raised when the selected repo appears to need authenticated Hugging Face access."""
+
+    def __init__(self, *, model_id: str, role: str) -> None:
+        profile = get_model_profile(model_id)
+        label = profile.get("label") or model_id
+        user_message = (
+            f"{label} appears to require a Hugging Face user token before it can be downloaded. "
+            f"Set {HUGGINGFACE_TOKEN_ENV_VAR} in your terminal or bash profile, or enter a token in the browser popup. "
+            "Anveshak will retry automatically after a token is provided."
+        )
+        super().__init__(user_message)
+        self.model_id = model_id
+        self.role = role
+        self.label = label
+        self.user_message = user_message
 
 
 class _ProgressTracker:

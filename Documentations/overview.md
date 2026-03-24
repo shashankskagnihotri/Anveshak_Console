@@ -22,10 +22,12 @@ The project is designed so that the reasoning model, retrieval stack, memory sta
 - Use retrieved local-file evidence during answer generation
 - Parse PDFs and other document-like files into retrieval-ready text
 - Extract page previews or document visuals when the selected model can use images
+- Fall back to sampled video frames for image-capable models that do not natively support video
 - Search the web live during a run
 - Keep durable long-term user memory across sessions
 - Let users steer a run while the model is generating
 - Expose saved local workflows through generated API keys
+- Detect when a gated Hugging Face model needs user authentication and prompt for a token in the browser UI
 - Keep per-run logs for debugging and reproducibility
 
 ## What It Cannot Do
@@ -33,8 +35,23 @@ The project is designed so that the reasoning model, retrieval stack, memory sta
 - It does not make every supported model equally fast or equally practical on one machine
 - It cannot bypass upstream gated-model restrictions or missing checkpoint access
 - It does not magically make text-only models natively understand PDFs as documents; those are parsed into text context
+- It does not guarantee that sampled fallback video frames capture every important moment of a clip
 - It does not remove the hardware cost of very large checkpoints
 - It does not guarantee identical behavior across every model family, because processor and remote-code behavior differs across upstream repos
+
+## Hugging Face Authentication For Gated Models
+
+Most Anveshak users do not need a Hugging Face token, because many supported checkpoints are public.
+
+For gated models, the runtime now checks `HUGGINGFACE_HUB_TOKEN` automatically. If that variable is present, Anveshak passes it through to the Hugging Face Hub during checkpoint preparation. `HF_TOKEN`, `HUGGINGFACE_TOKEN`, `HUGGING_FACE_HUB_TOKEN`, and `HUGGING_FACE_TOKEN` are treated as equivalent compatibility aliases. Users can set the primary variable in the current shell:
+
+```bash
+export HUGGINGFACE_HUB_TOKEN=hf_...
+```
+
+Or persist it for future bash sessions by adding the same export line to `~/.bashrc` or `~/.bash_profile`.
+
+If a user chooses a gated model and automatic authentication still is not available, the browser UI opens a modal prompt asking for a personal Hugging Face token, explains that public models do not need one, and links to the official Hugging Face token-management instructions. The runtime then retries checkpoint preparation after the token is submitted.
 
 ## Main Components
 
@@ -89,7 +106,7 @@ This is the main local runner for Hugging Face model families. It handles:
 
 `anveshak/modeling/kimi_server_runner.py`
 
-This is the dedicated Kimi backend for OpenAI-compatible local servers. It exists because Kimi is better served through a compatible backend than through the slow generic in-process Hugging Face path on the target hardware.
+This is the OpenAI-compatible served-model backend. It is currently used for models such as Kimi K2 when they are better served through a compatible endpoint than through the generic in-process Hugging Face path.
 
 ### Retrieval
 
@@ -141,14 +158,15 @@ For a normal chat run:
 
 1. The prompt and attachments are normalized.
 2. Documents are parsed into text, and sometimes visuals.
-3. The workspace index is refreshed when enabled.
-4. Long-term memory is retrieved.
-5. Direct local path mentions are pulled in.
-6. Semantic local-file retrieval runs.
-7. Web retrieval is disabled, automatic, or forced depending on the selected policy.
-8. The answer prompt is composed from all retrieved evidence.
-9. The model streams the answer.
-10. Durable memory compression happens after the answer, in the background.
+3. Video-capable models receive native video attachments, while image-only multimodal models receive sampled fallback frames and a warning about possible missed moments.
+4. The workspace index is refreshed when enabled.
+5. Long-term memory is retrieved.
+6. Direct local path mentions are pulled in.
+7. Semantic local-file retrieval runs.
+8. Web retrieval is disabled, automatic, or forced depending on the selected policy.
+9. The answer prompt is composed from all retrieved evidence.
+10. The model streams the answer.
+11. Durable memory compression happens after the answer, in the background.
 
 This last point matters: the chat is unlocked as soon as the answer is done, while long-term memory compaction finishes asynchronously.
 
@@ -284,6 +302,7 @@ Users should expect patience-worthy startup and shutdown times. On large local c
 - Very large models can take minutes to load
 - Some giant checkpoints are only practical with aggressive quantization or a dedicated serving backend
 - Kimi K2 is best served through a dedicated compatible server backend rather than the generic in-process Hugging Face path
+- MiroThinker 1.7 is supported as a local text model, but its official checkpoint is extremely large in practice
 
 ### Practical Expectations By Feature
 

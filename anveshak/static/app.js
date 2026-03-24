@@ -19,6 +19,7 @@ let apiInstanceMode = "independent";
 let runtimeStatusSnapshot = null;
 let pendingApiDeleteId = null;
 let apiCallsCache = [];
+let lastHuggingFaceAuthPromptVersion = -1;
 const pendingFiles = [];
 
 const API_DOCS_LOCAL_PATH = "./Documentations/API_CALLS.md";
@@ -101,6 +102,16 @@ const apiKeyModalCurlEl = document.getElementById("api-key-modal-curl");
 const apiDeleteModalEl = document.getElementById("api-delete-modal");
 const apiDeletePreviewEl = document.getElementById("api-delete-preview");
 const apiDeleteConfirmEl = document.getElementById("api-delete-confirm");
+const huggingFaceTokenModalEl = document.getElementById("huggingface-token-modal");
+const huggingFaceTokenMessageEl = document.getElementById("huggingface-token-message");
+const huggingFaceTokenModelEl = document.getElementById("huggingface-token-model");
+const huggingFaceTokenEnvVarEl = document.getElementById("huggingface-token-env-var");
+const huggingFaceTokenExportCommandEl = document.getElementById("huggingface-token-export-command");
+const huggingFaceTokenInputEl = document.getElementById("huggingface-token-input");
+const huggingFaceTokenStatusEl = document.getElementById("huggingface-token-status");
+const huggingFaceTokenGuideLinkEl = document.getElementById("huggingface-token-guide-link");
+const huggingFaceTokenSettingsLinkEl = document.getElementById("huggingface-token-settings-link");
+const huggingFaceTokenSubmitEl = document.getElementById("huggingface-token-submit");
 const modalCloseEls = Array.from(document.querySelectorAll("[data-close-modal]"));
 
 async function ensureSession() {
@@ -635,6 +646,7 @@ function applyRuntimeStatus(payload) {
   runtimeEmbeddingEl.textContent = payload.embedding_model_id;
   renderRuntimeSummary(payload);
   syncApiRuntimeSummary(payload);
+  maybeShowHuggingFaceTokenModal(payload);
 
   runtimeReady = Boolean(payload.ready);
   updateRunControls();
@@ -758,6 +770,92 @@ function openModal(modalEl) {
 function closeModal(modalEl) {
   if (!modalEl) return;
   modalEl.classList.add("hidden");
+}
+
+function setHuggingFaceTokenStatus(message, tone = "neutral") {
+  if (!huggingFaceTokenStatusEl) return;
+  huggingFaceTokenStatusEl.textContent = message;
+  huggingFaceTokenStatusEl.classList.remove("success-text", "error-text");
+  if (tone === "success") huggingFaceTokenStatusEl.classList.add("success-text");
+  if (tone === "error") huggingFaceTokenStatusEl.classList.add("error-text");
+}
+
+function populateHuggingFaceTokenModal(payload) {
+  const envVar = payload.huggingface_token_env_var || "HUGGINGFACE_HUB_TOKEN";
+  const aliasEnvVars = Array.isArray(payload.huggingface_token_alias_env_vars)
+    ? payload.huggingface_token_alias_env_vars.filter(Boolean)
+    : [];
+  const modelId = payload.huggingface_auth_model_id || payload.model_id || "-";
+  if (huggingFaceTokenMessageEl) {
+    huggingFaceTokenMessageEl.textContent = payload.huggingface_auth_message
+      || "This model appears to need a personal Hugging Face token before Anveshak can finish preparing the runtime.";
+  }
+  if (huggingFaceTokenModelEl) huggingFaceTokenModelEl.textContent = modelId;
+  if (huggingFaceTokenEnvVarEl) huggingFaceTokenEnvVarEl.textContent = envVar;
+  if (huggingFaceTokenExportCommandEl) huggingFaceTokenExportCommandEl.textContent = `export ${envVar}=hf_...`;
+  if (huggingFaceTokenGuideLinkEl) {
+    huggingFaceTokenGuideLinkEl.href = payload.huggingface_token_guide_url || "https://huggingface.co/docs/hub/main/security-tokens";
+  }
+  if (huggingFaceTokenSettingsLinkEl) {
+    huggingFaceTokenSettingsLinkEl.href = payload.huggingface_token_settings_url || "https://huggingface.co/settings/tokens";
+  }
+  const aliasNote = aliasEnvVars.length ? ` It also treats ${aliasEnvVars.join(", ")} as the same token.` : "";
+  setHuggingFaceTokenStatus(`Anveshak checks ${envVar} automatically on startup.${aliasNote} Most public models do not need it.`);
+}
+
+function maybeShowHuggingFaceTokenModal(payload) {
+  if (!payload?.huggingface_auth_required) {
+    closeModal(huggingFaceTokenModalEl);
+    return;
+  }
+
+  populateHuggingFaceTokenModal(payload);
+
+  const version = Number(payload.version || 0);
+  if (!huggingFaceTokenModalEl?.classList.contains("hidden") && version === lastHuggingFaceAuthPromptVersion) {
+    return;
+  }
+
+  lastHuggingFaceAuthPromptVersion = version;
+  openModal(huggingFaceTokenModalEl);
+  huggingFaceTokenInputEl?.focus();
+  huggingFaceTokenInputEl?.select();
+}
+
+async function submitHuggingFaceToken() {
+  const token = huggingFaceTokenInputEl?.value.trim() || "";
+  if (!token) {
+    setHuggingFaceTokenStatus("Enter a Hugging Face token before retrying.", "error");
+    huggingFaceTokenInputEl?.focus();
+    return;
+  }
+
+  if (huggingFaceTokenSubmitEl) huggingFaceTokenSubmitEl.disabled = true;
+  if (huggingFaceTokenInputEl) huggingFaceTokenInputEl.disabled = true;
+  setHuggingFaceTokenStatus("Validating the token and retrying runtime preparation...");
+
+  try {
+    const response = await fetch("/api/runtime/huggingface-token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.detail || "The Hugging Face token could not be accepted.");
+    }
+    if (huggingFaceTokenInputEl) huggingFaceTokenInputEl.value = "";
+    setHuggingFaceTokenStatus("Token accepted. Retrying gated model access.", "success");
+    closeModal(huggingFaceTokenModalEl);
+    applyRuntimeStatus(payload);
+  } catch (error) {
+    setHuggingFaceTokenStatus(error.message || "The Hugging Face token could not be accepted.", "error");
+    huggingFaceTokenInputEl?.focus();
+    huggingFaceTokenInputEl?.select();
+  } finally {
+    if (huggingFaceTokenSubmitEl) huggingFaceTokenSubmitEl.disabled = false;
+    if (huggingFaceTokenInputEl) huggingFaceTokenInputEl.disabled = false;
+  }
 }
 
 async function copyTextToClipboard(text, successMessage) {
@@ -1050,12 +1148,13 @@ apiOpenKeyDocsEl.addEventListener("click", () => {
 });
 apiKeyModalCopyEl.addEventListener("click", () => copyTextToClipboard(apiKeyModalValueEl.textContent, "API key copied."));
 apiDeleteConfirmEl.addEventListener("click", deletePendingApiCall);
+huggingFaceTokenSubmitEl?.addEventListener("click", submitHuggingFaceToken);
 modalCloseEls.forEach((button) => {
   button.addEventListener("click", () => {
     closeModal(document.getElementById(button.dataset.closeModal));
   });
 });
-[apiKeyModalEl, apiDeleteModalEl].forEach((modalEl) => {
+[apiKeyModalEl, apiDeleteModalEl, huggingFaceTokenModalEl].forEach((modalEl) => {
   modalEl?.addEventListener("click", (event) => {
     if (event.target === modalEl) {
       closeModal(modalEl);
@@ -1067,6 +1166,13 @@ promptEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     sendPrompt();
+  }
+});
+
+huggingFaceTokenInputEl?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    submitHuggingFaceToken();
   }
 });
 

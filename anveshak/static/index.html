@@ -353,6 +353,54 @@
       </div>
     </div>
 
+    <div id="huggingface-token-modal" class="modal-overlay hidden">
+      <div class="modal-card modal-card-small">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">Gated Hugging Face Model</p>
+            <h2>Enter a Hugging Face token</h2>
+          </div>
+          <button class="modal-close ghost" type="button" data-close-modal="huggingface-token-modal">Close</button>
+        </div>
+        <p id="huggingface-token-message" class="subtle">
+          This model appears to need a personal Hugging Face token before Anveshak can finish preparing the runtime.
+        </p>
+        <div class="huggingface-token-summary">
+          <div class="runtime-pill">
+            <span>Requested model</span>
+            <strong id="huggingface-token-model">-</strong>
+          </div>
+          <div class="runtime-pill">
+            <span>Preferred env var</span>
+            <strong><code id="huggingface-token-env-var">HUGGINGFACE_HUB_TOKEN</code></strong>
+          </div>
+        </div>
+        <div class="huggingface-token-helper">
+          <div class="huggingface-token-tip">
+            <span>Current terminal</span>
+            <code id="huggingface-token-export-command">export HUGGINGFACE_HUB_TOKEN=hf_...</code>
+          </div>
+          <div class="huggingface-token-tip">
+            <span>Persistent bash setup</span>
+            <p class="subtle">Add the same export line to <code>~/.bashrc</code> or <code>~/.bash_profile</code>, then restart the shell or run <code>source ~/.bashrc</code>.</p>
+          </div>
+        </div>
+        <label class="field">
+          <span>Hugging Face token</span>
+          <input id="huggingface-token-input" type="password" placeholder="hf_..." autocomplete="off" />
+        </label>
+        <p id="huggingface-token-status" class="subtle">Most users do not need this. It is only required when the selected model or repo is gated.</p>
+        <div class="modal-links huggingface-token-links">
+          <a id="huggingface-token-guide-link" href="https://huggingface.co/docs/hub/main/security-tokens" target="_blank" rel="noreferrer">How to create a token</a>
+          <a id="huggingface-token-settings-link" href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">Open token settings</a>
+        </div>
+        <div class="api-actions">
+          <button id="huggingface-token-submit" type="button">Save token and retry</button>
+          <button class="ghost" type="button" data-close-modal="huggingface-token-modal">Maybe later</button>
+        </div>
+      </div>
+    </div>
+
     <div id="api-delete-modal" class="modal-overlay hidden">
       <div class="modal-card modal-card-small">
         <div class="modal-header">

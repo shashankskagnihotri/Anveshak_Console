@@ -77,6 +77,61 @@ def parse_document_for_chat(
     )
 
 
+def sample_video_frames_for_chat(
+    path: Path,
+    *,
+    cache_root: Path,
+    max_frames: int = 8,
+) -> list[Path]:
+    """Extract a small cached set of evenly spaced frames from a video file."""
+
+    if max_frames <= 0:
+        return []
+
+    cache_dir = cache_root / _video_cache_key(path, max_frames=max_frames)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = cache_dir / "manifest.json"
+
+    if manifest_path.exists():
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            frame_paths = [
+                cache_dir / name
+                for name in payload.get("frame_files", [])
+                if (cache_dir / name).exists()
+            ]
+            if frame_paths:
+                return frame_paths
+        except Exception:
+            pass
+
+    from decord import VideoReader, cpu
+    import numpy as np
+    from PIL import Image
+
+    reader = VideoReader(str(path), ctx=cpu(0))
+    frame_count = len(reader)
+    if frame_count <= 0:
+        return []
+
+    indices = np.linspace(0, frame_count - 1, num=min(max_frames, frame_count), dtype=int).tolist()
+    batch = reader.get_batch(indices).asnumpy()
+
+    frame_paths: list[Path] = []
+    for output_index, (frame_index, frame_array) in enumerate(zip(indices, batch), start=1):
+        target_path = cache_dir / f"frame-{output_index:02d}-at-{frame_index:06d}.png"
+        Image.fromarray(frame_array).save(target_path, format="PNG")
+        frame_paths.append(target_path)
+
+    manifest = {
+        "source_path": str(path.resolve()),
+        "parser_name": "decord",
+        "frame_files": [item.name for item in frame_paths],
+    }
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    return frame_paths
+
+
 def _read_pdf(path: Path) -> str:
     """Extract text from a PDF without generating chat visuals."""
 
@@ -186,6 +241,14 @@ def _document_cache_key(path: Path, *, max_images: int, max_rendered_pages: int)
 
     stat = path.stat()
     fingerprint = f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}:{max_images}:{max_rendered_pages}"
+    return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()
+
+
+def _video_cache_key(path: Path, *, max_frames: int) -> str:
+    """Fingerprint a sampled-video cache entry by file identity and frame budget."""
+
+    stat = path.stat()
+    fingerprint = f"{path.resolve()}:{stat.st_mtime_ns}:{stat.st_size}:{max_frames}"
     return hashlib.sha1(fingerprint.encode("utf-8")).hexdigest()
 
 

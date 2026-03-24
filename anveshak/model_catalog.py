@@ -104,6 +104,18 @@ MODEL_CATALOG = [
         "notes": "Text-only open model; best served through a dedicated Kimi engine such as a local OpenAI-compatible vLLM, SGLang, or KTransformers deployment.",
     },
     {
+        "label": "MiroThinker 1.7",
+        "model_id": "miromind-ai/MiroThinker-1.7",
+        "family": "MiroThinker",
+        "kind": "text-generation",
+        "input_backend": "text-chat",
+        "supports_text": True,
+        "supports_images": False,
+        "supports_video": False,
+        "supports_native_documents": False,
+        "notes": "Open Apache-2.0 deep-research reasoning model from MiroMind AI with a 256K context window per the official model card.",
+    },
+    {
         "label": "DeepSeek VL2",
         "model_id": "deepseek-ai/deepseek-vl2",
         "family": "DeepSeek",
