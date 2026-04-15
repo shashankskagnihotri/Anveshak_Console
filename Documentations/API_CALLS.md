@@ -20,6 +20,8 @@ Saving a call opens a popup that shows:
 
 Deleting a key opens a confirmation dialog that previews the saved configuration before removal so the user can see exactly what is being deleted.
 
+In the browser UI, you open this area from the top-right `API Calls` dropdown in the main console header.
+
 ## What The Builder Saves
 
 Each saved API call stores:
@@ -100,6 +102,8 @@ You can also pass the key with:
 ```bash
 x-api-key: <api_key>
 ```
+
+The server accepts either the saved `call_id` or the generated API key as the `call_ref` path segment. For shared docs and production-style usage, prefer `call_id` in the URL and keep the generated key only in the header.
 
 ## Request Body
 
@@ -239,3 +243,12 @@ When you save or update a call, the saved snapshots are refreshed to the current
 - A private assistant endpoint that should use saved user context
 - A stateful API-backed local agent that should remember earlier invocations
 - Controlled experiments where internet use must be forced, allowed automatically, or disabled completely
+
+## Local Smoke Test Helper
+
+For a tiny end-to-end browser setup and local invoke example, see:
+
+- [`debugging/debugging_API.md`](../debugging/debugging_API.md)
+- [`debugging/run_api_component_smoke_test.py`](../debugging/run_api_component_smoke_test.py)
+
+That helper intentionally uses the generated API key as both the bearer key and the `call_ref` path value to keep the script small.

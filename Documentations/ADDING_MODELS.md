@@ -15,6 +15,7 @@ Each entry in `MODEL_CATALOG` should include:
 - `input_backend`
 - `supports_text`
 - `supports_images`
+- `supports_audio`
 - `supports_video`
 - `supports_native_documents`
 - `notes`
@@ -24,6 +25,7 @@ Optional fields when needed:
 - `preferred_runtime_backend`
 - `server_model_name`
 - `requires_server_backend`
+- `hf_loader`
 
 Example fields:
 
@@ -79,6 +81,8 @@ If the flags are wrong:
 
 - unsupported files may be sent to the model incorrectly
 - supported files may be hidden behind unnecessary warnings
+- audio transcription may be routed to the wrong backend
+- web-media safety checks may assume the wrong moderation path
 
 Be explicit and conservative.
 

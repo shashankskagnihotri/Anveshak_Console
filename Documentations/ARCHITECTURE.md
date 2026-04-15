@@ -17,10 +17,13 @@ This document explains how the codebase is organized after the `anveshak` packag
 2. `anveshak.chat.service.ChatService` wires together:
    - runtime preparation
    - the reasoning model runner
+   - Whisper transcription and microphone prewarm
    - embedding model
    - workspace retrieval
+   - background workspace-index refresh
    - memory retrieval
    - active web retrieval
+   - inline web-media curation and safety screening
    - API-call presets
    - run logging
 3. `anveshak.server.build_app()` exposes the browser UI and JSON/SSE API.
@@ -36,6 +39,8 @@ This document explains how the codebase is organized after the `anveshak` packag
   Retrieval subsystems for workspace files, live web search, embeddings, memory, and FAISS persistence.
 - `anveshak/static/`
   Browser UI assets packaged with the library.
+- `anveshak/transcription.py`
+  Local Whisper wrapper used for browser microphone transcription and Whisper-backed audio attachments.
 
 ## Files Most Contributors Will Touch
 
@@ -46,13 +51,17 @@ This document explains how the codebase is organized after the `anveshak` packag
 - `anveshak/retrieval/active_search.py`
   Change the active web retrieval loop.
 - `anveshak/retrieval/web.py`
-  Change search providers or evidence fetching.
+  Change search providers, evidence fetching, inline web media selection, or media safety moderation.
 - `anveshak/retrieval/memory.py`
   Change long-term memory retrieval and ranking.
 - `anveshak/retrieval/embeddings.py`
   Change the embedding backend.
 - `anveshak/file_parsers.py`
   Add or improve file/document parsing.
+- `anveshak/transcription.py`
+  Change Whisper loading, WAV decoding, or audio-transcription behavior.
+- `anveshak/static/app.js` and `anveshak/static/styles.css`
+  Change browser interaction details such as media toggles, transcription UI, and Markdown rendering behavior.
 - `tests/`
   Regression and unit tests.
 

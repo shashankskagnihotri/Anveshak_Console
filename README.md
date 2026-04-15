@@ -31,10 +31,13 @@ Serious research work often involves unpublished notes, drafts, PDFs, experiment
 - Uses live web retrieval during a run instead of answering from stale model weights alone.
 - Maintains long-term memory in `context_window/` and resets it with `Obliviate`.
 - Reads local files, direct file paths, and browser uploads without shipping them to a hosted service.
-- Supports browser chat, terminal chat, drag-and-drop attachments, inline steering, and saved API-style call presets.
-- Lets each browser prompt choose `No Internet`, `Auto`, or `Searching the Web`.
+- Supports browser chat, terminal chat, drag-and-drop attachments, microphone capture with editable Whisper transcription, inline steering, and saved API-style call presets.
+- Lets each browser prompt choose `No Internet`, `Auto`, or `Searching the Web`, plus `Safe` or `Unrestricted` inline web media.
+- Shows inline web images and videos in chat when live retrieval finds relevant results.
+- Renders assistant responses as Markdown by default, with per-message `MD` / `TXT` switching and LaTeX support.
 - Includes a builder-driven API layer with generated keys, saved runtime snapshots, optional user-context reuse, and optional per-call remembered history.
 - Unlocks the chat as soon as the answer is finished, while long-term memory compression continues safely in the background.
+- Refreshes the ambient local-file index in the background instead of blocking prompt submission.
 - Ships as an installable Python package with the `anveshak` command.
 - Writes per-run structured logs in `logs/` and starts reproducibly with `--seed`.
 - Automatically checks `HUGGINGFACE_HUB_TOKEN` for gated Hugging Face models and, if a gated download still needs auth, prompts for the token in the browser UI instead of hard-failing silently.
@@ -61,17 +64,18 @@ Anveshak is built from a small set of explicit subsystems rather than one monoli
 The system is practical because the model is not left alone with only its weights.
 
 1. Attachments are normalized and classified as images, videos, documents, or unsupported binary files.
-2. Microphone recordings are transcribed into chat text with OpenAI Whisper before retrieval and answering continue, while attached audio files use native Gemma audio only when the active Gemma 4 variant supports it and otherwise fall back to Whisper.
+2. Clicking the microphone starts background Whisper warm-up, and recorded microphone clips are transcribed into editable chat text before retrieval and answering continue.
 3. Documents are parsed into text and, when supported, extracted visuals or page previews.
 4. Video-capable models receive native video attachments, while image-only multimodal models receive a sampled set of fallback video frames with a reliability warning in chat.
-5. Local files are indexed into the workspace retrieval store.
+5. The local workspace index refreshes in the background when enabled, and attached documents are indexed into the retrieval store immediately.
 6. Explicit local paths mentioned in the prompt are pulled into the highest-priority file context.
 7. Long-term memory notes are retrieved from `context_window/memory/`.
 8. The system decides whether to use the internet, or follows the user's explicit web-mode choice.
 9. Active web retrieval gathers fresh evidence, chunks it, embeds it, and ranks it.
-10. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
-11. The answer streams back to the UI with citations.
-12. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
+10. When applicable, Anveshak also curates inline web image or video previews using `Safe` or `Unrestricted` mode.
+11. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
+12. The answer streams back to the UI with citations, and any curated web media appears underneath it in chat.
+13. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
 
 This split is important: the recent conversation is available immediately through the normal context window, while the durable memory note is written asynchronously so the next turn does not have to wait.
 
@@ -106,7 +110,7 @@ Notes:
 - `transformers` and `gptqmodel` are pinned to stable releases because `transformers` development snapshots have broken older remote-code model imports in practice.
 - `einops`, `timm`, and `torchvision` are part of the supported multimodal dependency set and should be installed before trying InternVL, LLaVA, or similar VLM checkpoints.
 - `gptqmodel` may compile extensions during install or first use.
-- `openai-whisper` powers microphone transcription, and the official Whisper repo also requires the `ffmpeg` command-line tool to be installed on the host system.
+- `openai-whisper` powers transcription. Browser-recorded microphone `.wav` clips are decoded directly in Python, so `ffmpeg` is not required for that mic path, but it is still recommended for broader Whisper compatibility with other audio formats.
 - `PyMuPDF` is used for PDF text and visual extraction.
 
 ### Hugging Face Tokens For Gated Models
@@ -251,6 +255,8 @@ Start with these public guides:
   Detailed system overview, capabilities, limitations, resource requirements, and component map.
 - [`Documentations/API_CALLS.md`](Documentations/API_CALLS.md)
   How the API Call Builder works, what each option means, how to invoke saved calls, and how to delete old keys.
+- [`debugging/debugging_API.md`](debugging/debugging_API.md)
+  Browser setup guide plus the smallest local smoke-test flow for saved API calls.
 
 Contributor-focused extension guides are in the same `Documentations/` directory:
 
@@ -303,6 +309,7 @@ python -m compileall main.py anveshak tests
 - The main prompt box stays editable while a run is active, but `Send` stays inactive until another prompt is allowed.
 - Steering is enabled only while the assistant is actively generating an answer.
 - The browser chat can show steering notes inline under the user message that they modified.
+- Microphone recordings are transcribed before send, inserted into the prompt box for review, and keep `Send` disabled while transcription is running.
 - Images are passed directly to multimodal models when the selected backend supports them.
 - Video-capable models receive videos directly, while image-capable but video-incapable models receive a sampled set of fallback frames as image attachments.
 - When that fallback happens, the chat warns that important moments may be missed between sampled frames, so video-based answers may be unreliable.
@@ -310,6 +317,10 @@ python -m compileall main.py anveshak tests
 - Text-like and office-style documents are parsed into retrieval context.
 - Text-only models receive parsed document text instead of fake multimodal attachments.
 - Unsupported modalities are reported directly inside the chat.
+- The ambient local-file index refreshes in the background and reports its status in the left sidebar instead of blocking the run queue.
+- Live web runs can append inline image/video previews beneath the answer when relevant results are found.
+- `Safe` web media checks previews before display, while `Unrestricted` skips screening and shows a visible warning.
+- Each assistant response defaults to Markdown plus LaTeX rendering, and each message has its own small `MD` / `TXT` toggle to reveal raw text.
 - The reasoning model stays pinned while a session exists, so interactive follow-up turns do not reload the checkpoint each time.
 - After an answer is emitted, long-term memory compression runs in the background instead of blocking the next prompt.
 
@@ -344,6 +355,8 @@ curl -X POST http://127.0.0.1:8000/v1/api-calls/<call_id>/invoke \
 ```
 
 Full API-call documentation is in [`Documentations/API_CALLS.md`](Documentations/API_CALLS.md).
+
+For the smallest browser-driven API smoke test, use [`debugging/debugging_API.md`](debugging/debugging_API.md) together with [`debugging/run_api_component_smoke_test.py`](debugging/run_api_component_smoke_test.py).
 
 To erase long-term memory and clear the current session:
 

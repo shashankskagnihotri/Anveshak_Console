@@ -23,9 +23,14 @@ The project is designed so that the reasoning model, retrieval stack, memory sta
 - Parse PDFs and other document-like files into retrieval-ready text
 - Extract page previews or document visuals when the selected model can use images
 - Fall back to sampled video frames for image-capable models that do not natively support video
+- Transcribe browser microphone recordings into editable chat text before send
+- Warm Whisper in the background when microphone capture begins
 - Search the web live during a run
+- Show inline web images or videos inside the chat when live retrieval finds them
+- Offer `Safe` and `Unrestricted` policies for inline web media
 - Keep durable long-term user memory across sessions
 - Let users steer a run while the model is generating
+- Render assistant responses as Markdown by default with per-message raw-text fallback and LaTeX support
 - Expose saved local workflows through generated API keys
 - Detect when a gated Hugging Face model needs user authentication and prompt for a token in the browser UI
 - Keep per-run logs for debugging and reproducibility
@@ -108,6 +113,10 @@ This is the main local runner for Hugging Face model families. It handles:
 
 This is the OpenAI-compatible served-model backend. It is currently used for models such as Kimi K2 when they are better served through a compatible endpoint than through the generic in-process Hugging Face path.
 
+`anveshak/transcription.py`
+
+This module wraps OpenAI Whisper for local transcription. It warms lazily, supports browser-recorded PCM WAV clips without requiring `ffmpeg`, and is used by both the microphone workflow and Whisper-backed audio attachments.
+
 ### Retrieval
 
 `anveshak/retrieval/`
@@ -157,16 +166,18 @@ The system does not rely only on the base model weights.
 For a normal chat run:
 
 1. The prompt and attachments are normalized.
-2. Documents are parsed into text, and sometimes visuals.
-3. Video-capable models receive native video attachments, while image-only multimodal models receive sampled fallback frames and a warning about possible missed moments.
-4. The workspace index is refreshed when enabled.
-5. Long-term memory is retrieved.
+2. Starting microphone capture also starts background Whisper warm-up, and finished mic clips are transcribed into editable chat text before send.
+3. Documents are parsed into text, and sometimes visuals.
+4. Video-capable models receive native video attachments, while image-only multimodal models receive sampled fallback frames and a warning about possible missed moments.
+5. The workspace index refreshes in the background when enabled, rather than blocking prompt submission.
 6. Direct local path mentions are pulled in.
 7. Semantic local-file retrieval runs.
-8. Web retrieval is disabled, automatic, or forced depending on the selected policy.
-9. The answer prompt is composed from all retrieved evidence.
-10. The model streams the answer.
-11. Durable memory compression happens after the answer, in the background.
+8. Long-term memory is retrieved.
+9. Web retrieval is disabled, automatic, or forced depending on the selected policy.
+10. When web retrieval is active and the prompt warrants it, inline web media previews are curated in `Safe` or `Unrestricted` mode.
+11. The answer prompt is composed from all retrieved evidence.
+12. The model streams the answer.
+13. Durable memory compression happens after the answer, in the background.
 
 This last point matters: the chat is unlocked as soon as the answer is done, while long-term memory compaction finishes asynchronously.
 
@@ -177,15 +188,20 @@ This last point matters: the chat is unlocked as soon as the answer is done, whi
 The browser console provides:
 
 - runtime-preparation overlay
+- background local-file-index status in the sidebar
 - streaming answer tokens
 - streamed reasoning trace
 - drag-and-drop attachments
 - attachment thumbnails/cards
 - per-message web-mode selection
+- per-message `Safe` / `Unrestricted` web-media selection
+- inline web image/video cards under answers when live retrieval returns them
+- microphone recording with editable Whisper transcription before send
+- per-answer Markdown / raw-text toggle with LaTeX rendering when Markdown is enabled
 - steering during generation
 - saved API-call workflows
 
-The main prompt textarea stays editable while a run is active, but the `Send` button only unlocks when the session can accept another prompt.
+The main prompt textarea stays editable while a run is active, but the `Send` button only unlocks when the session can accept another prompt. During microphone transcription, `Send` is intentionally disabled until the transcript is ready or the audio is attached as a fallback.
 
 The steering textarea also stays editable outside the active steering window, but its send button unlocks only while the model is actively generating.
 

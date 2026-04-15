@@ -38,12 +38,24 @@ Run the original smoke tests:
 pytest tests/test_smoke.py -q
 ```
 
+Run the focused browser-flow regressions:
+
+```bash
+pytest tests/test_audio_transcription_flow.py tests/test_web_media_flow.py tests/test_workspace_index_background.py -q
+```
+
 ## Extra Sanity Check
 
 Compile the Python package to catch syntax issues:
 
 ```bash
 python -m compileall main.py anveshak tests
+```
+
+Check the browser bundle for JavaScript syntax issues:
+
+```bash
+node --check anveshak/static/app.js
 ```
 
 ## What the Tests Cover
@@ -58,6 +70,9 @@ python -m compileall main.py anveshak tests
 - memory reset behavior
 - parser behavior for PDFs
 - model catalog backend inference
+- microphone transcription flow
+- inline web media flow
+- background workspace-index behavior
 
 ## What the Tests Do Not Cover
 
@@ -65,6 +80,7 @@ python -m compileall main.py anveshak tests
 - full GPU inference benchmarks
 - browser visual regression testing
 - external website stability
+- real third-party web-media availability or embed-policy changes
 
 Those remain manual validation areas.
 

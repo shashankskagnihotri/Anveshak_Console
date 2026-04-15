@@ -37,10 +37,11 @@ API_calls/
 checkpoints/
 context_window/
 logs/
-debugging/
 
-# Local verification and tests
-tests/
+# Debugging workspace: keep only the public helper files visible by default
+debugging/*
+!debugging/debugging_API.md
+!debugging/run_api_component_smoke_test.py
 
 # Notebooks and misc local files
 .ipynb_checkpoints/

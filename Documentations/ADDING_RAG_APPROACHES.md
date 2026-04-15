@@ -21,6 +21,11 @@ The active multi-round web loop lives in:
 
 - `anveshak/retrieval/active_search.py`
 
+Inline web image/video previews are also curated in:
+
+- `anveshak/retrieval/web.py`
+- `anveshak/static/app.js`
+
 ## Where to Add a New RAG Strategy
 
 Use this rule of thumb:
@@ -71,6 +76,7 @@ If you add a new evidence source, you usually need both:
 
 - retrieval-time ranking
 - prompt-time rendering
+- and, if the source has a user-facing preview, browser rendering plus any required safety policy
 
 ## Testing Expectations
 
