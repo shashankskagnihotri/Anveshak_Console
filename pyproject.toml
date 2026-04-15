@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "AGPL-3.0-or-later" }
 authors = [
-  { name = "Sagnik + Codex" }
+  { name = "Shashank Agnihotri" }
 ]
 dependencies = [
   "accelerate",
@@ -23,7 +23,9 @@ dependencies = [
   "gptqmodel>=5.7.0,<5.9",
   "huggingface-hub",
   "httpx",
+  "librosa",
   "numpy",
+  "openai-whisper",
   "openpyxl",
   "optimum",
   "orjson",
@@ -38,12 +40,13 @@ dependencies = [
   "safetensors",
   "sentence-transformers",
   "sentencepiece",
+  "soundfile",
   "timm",
   "torch",
   "torchvision",
   "tqdm",
   "trafilatura",
-  "transformers==5.3.0",
+  "transformers==5.5.4",
   "uvicorn[standard]",
 ]
 

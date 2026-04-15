@@ -51,6 +51,8 @@ Rules:
 - If the latest request conflicts with older memory or prior conversation, follow the latest request and mention the conflict if it materially matters.
 - If files are attached for this turn, inspect and use them before leaning on background memory.
 - Cite sources inline as [F#], [W#], or [M#] when you rely on them.
+- The console renders final answers as Markdown by default. You may use concise Markdown structure and LaTeX math with $...$ or $$...$$ when it helps.
+- When live web retrieval is active, the console can append curated inline web images or videos beneath your answer. Do not claim the interface cannot show web media; instead mention that relevant previews can appear below when available.
 - If evidence is missing or conflicting, say so clearly.
 - Do not invent web citations that were not provided.
 - Keep reasoning internal inside <think>...</think> and place the final answer outside it.
@@ -58,6 +60,16 @@ Rules:
 
 
 JSON_SYSTEM_PROMPT = """Return only valid JSON. No markdown fences, no prose before or after the JSON."""
+
+AUDIO_TRANSCRIPTION_SYSTEM_PROMPT = """You are a precise speech transcription assistant."""
+
+AUDIO_TRANSCRIPTION_PROMPT = """Transcribe the attached audio exactly as spoken in its original language.
+
+Rules:
+- Return only the transcription text.
+- Do not add markdown, timestamps, speaker labels, or commentary.
+- Use digits when numbers are clearly spoken as numbers.
+"""
 
 
 def _apply_transformers_compat_shims() -> None:
@@ -251,7 +263,8 @@ class QwenRunner:
                 elif kind == "text-generation":
                     self.model = self._load_model_with_compat(AutoModelForCausalLM, model_source, model_kwargs)
                 else:
-                    self.model = self._load_model_with_compat(AutoModelForImageTextToText, model_source, model_kwargs)
+                    loader = self._resolve_multimodal_loader()
+                    self.model = self._load_model_with_compat(loader, model_source, model_kwargs)
 
             decoder = self._decoder_tokenizer()
             if getattr(decoder, "pad_token", None) is None and getattr(decoder, "eos_token", None) is not None:
@@ -345,13 +358,20 @@ Citations:
 """.strip()
         return self.generate_json(prompt, max_new_tokens=500)
 
-    def generate_json(self, prompt: str, *, max_new_tokens: int) -> dict:
+    def generate_json(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int,
+        attachments: list[Attachment] | None = None,
+    ) -> dict:
         """Generate JSON and attempt one repair pass if the first response is invalid."""
 
+        payload_attachments = list(attachments or [])
         raw = self.generate_text(
             system_prompt=JSON_SYSTEM_PROMPT,
             user_prompt=prompt,
-            attachments=[],
+            attachments=payload_attachments,
             max_new_tokens=max_new_tokens,
         )
         try:
@@ -369,7 +389,7 @@ Previous output:
             repaired = self.generate_text(
                 system_prompt=JSON_SYSTEM_PROMPT,
                 user_prompt=repair_prompt,
-                attachments=[],
+                attachments=payload_attachments,
                 max_new_tokens=max_new_tokens,
             )
             return extract_json_object(repaired)
@@ -406,6 +426,22 @@ Previous output:
             )
             self.last_used_at = time.time()
             return outputs[0].strip()
+
+    def transcribe_audio(self, attachment: Attachment, *, max_new_tokens: int = 512) -> str:
+        """Convert one supported audio attachment into plain text before the main task."""
+
+        if not self.profile.get("supports_audio"):
+            raise RuntimeError(f'{self.config.model_id} does not support native audio inputs in Anveshak.')
+        if attachment.media_kind != "audio":
+            raise ValueError(f"Expected an audio attachment, received {attachment.media_kind!r}.")
+        return compact_whitespace(
+            self.generate_text(
+                system_prompt=AUDIO_TRANSCRIPTION_SYSTEM_PROMPT,
+                user_prompt=AUDIO_TRANSCRIPTION_PROMPT,
+                attachments=[attachment],
+                max_new_tokens=max_new_tokens,
+            )
+        )
 
     def stream_answer(
         self,
@@ -625,6 +661,8 @@ Answer the latest user request for this run. Prefer the current task, current at
                     user_content.append({"type": "image", "image": attachment.path})
                 else:
                     user_content.append({"type": "image", "path": attachment.path})
+            elif attachment.media_kind == "audio":
+                user_content.append({"type": "audio", "audio": attachment.path})
             elif attachment.media_kind == "video":
                 if backend == "qwen_vision":
                     user_content.append({"type": "video", "video": attachment.path})
@@ -689,6 +727,7 @@ Answer the latest user request for this run. Prefer the current task, current at
     def _prepare_hf_multimodal_inputs(self, messages: list[dict]) -> dict:
         """Prepare multimodal inputs for non-Qwen Hugging Face processors."""
 
+        has_audio_inputs = self._message_contains_media(messages, media_type="audio")
         try:
             inputs = self.processor.apply_chat_template(
                 messages,
@@ -699,6 +738,11 @@ Answer the latest user request for this run. Prefer the current task, current at
             )
             return self._move_inputs_to_device(inputs)
         except Exception:
+            if has_audio_inputs:
+                raise RuntimeError(
+                    "The current processor could not prepare local audio inputs. "
+                    "Gemma audio support requires a Transformers build with tokenized multimodal chat-template audio support."
+                )
             # Some processors only expose a string chat template and need media passed separately.
             text = self.processor.apply_chat_template(
                 messages,
@@ -1207,3 +1251,28 @@ Answer the latest user request for this run. Prefer the current task, current at
             "float32": torch.float32,
         }
         return mapping[self.config.torch_dtype]
+
+    def _resolve_multimodal_loader(self):
+        """Pick the Hugging Face multimodal loader required by the active model profile."""
+
+        loader_kind = str(self.profile.get("hf_loader") or "").lower()
+        if loader_kind == "multimodal-lm":
+            loader = getattr(transformers, "AutoModelForMultimodalLM", None)
+            if loader is None:
+                raise RuntimeError(
+                    "This Transformers installation does not expose AutoModelForMultimodalLM, which is required for Gemma 4 multimodal models."
+                )
+            return loader
+        return AutoModelForImageTextToText
+
+    def _message_contains_media(self, messages: list[dict], *, media_type: str) -> bool:
+        """Tell whether a multimodal chat payload includes one specific media type."""
+
+        for message in messages:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for item in content:
+                if item.get("type") == media_type:
+                    return True
+        return False

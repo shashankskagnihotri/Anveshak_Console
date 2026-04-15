@@ -9,7 +9,7 @@ import json
 from io import StringIO
 from pathlib import Path
 
-from .config import DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, VIDEO_EXTENSIONS
+from .config import AUDIO_EXTENSIONS, DOCUMENT_EXTENSIONS, IMAGE_EXTENSIONS, TEXT_EXTENSIONS, VIDEO_EXTENSIONS
 
 
 def detect_media_kind(path: Path) -> str:
@@ -18,6 +18,8 @@ def detect_media_kind(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix in IMAGE_EXTENSIONS:
         return "image"
+    if suffix in AUDIO_EXTENSIONS:
+        return "audio"
     if suffix in VIDEO_EXTENSIONS:
         return "video"
     if suffix in TEXT_EXTENSIONS or suffix in DOCUMENT_EXTENSIONS:

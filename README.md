@@ -61,16 +61,17 @@ Anveshak is built from a small set of explicit subsystems rather than one monoli
 The system is practical because the model is not left alone with only its weights.
 
 1. Attachments are normalized and classified as images, videos, documents, or unsupported binary files.
-2. Documents are parsed into text and, when supported, extracted visuals or page previews.
-3. Video-capable models receive native video attachments, while image-only multimodal models receive a sampled set of fallback video frames with a reliability warning in chat.
-4. Local files are indexed into the workspace retrieval store.
-5. Explicit local paths mentioned in the prompt are pulled into the highest-priority file context.
-6. Long-term memory notes are retrieved from `context_window/memory/`.
-7. The system decides whether to use the internet, or follows the user's explicit web-mode choice.
-8. Active web retrieval gathers fresh evidence, chunks it, embeds it, and ranks it.
-9. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
-10. The answer streams back to the UI with citations.
-11. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
+2. Microphone recordings are transcribed into chat text with OpenAI Whisper before retrieval and answering continue, while attached audio files use native Gemma audio only when the active Gemma 4 variant supports it and otherwise fall back to Whisper.
+3. Documents are parsed into text and, when supported, extracted visuals or page previews.
+4. Video-capable models receive native video attachments, while image-only multimodal models receive a sampled set of fallback video frames with a reliability warning in chat.
+5. Local files are indexed into the workspace retrieval store.
+6. Explicit local paths mentioned in the prompt are pulled into the highest-priority file context.
+7. Long-term memory notes are retrieved from `context_window/memory/`.
+8. The system decides whether to use the internet, or follows the user's explicit web-mode choice.
+9. Active web retrieval gathers fresh evidence, chunks it, embeds it, and ranks it.
+10. The model-specific adapter composes a grounded prompt from attachments, local files, web evidence, long-term memory, and recent conversation turns.
+11. The answer streams back to the UI with citations.
+12. After the answer is already finished and the chat is unlocked, the exchange is compressed into durable long-term memory in the background.
 
 This split is important: the recent conversation is available immediately through the normal context window, while the durable memory note is written asynchronously so the next turn does not have to wait.
 
@@ -105,6 +106,7 @@ Notes:
 - `transformers` and `gptqmodel` are pinned to stable releases because `transformers` development snapshots have broken older remote-code model imports in practice.
 - `einops`, `timm`, and `torchvision` are part of the supported multimodal dependency set and should be installed before trying InternVL, LLaVA, or similar VLM checkpoints.
 - `gptqmodel` may compile extensions during install or first use.
+- `openai-whisper` powers microphone transcription, and the official Whisper repo also requires the `ffmpeg` command-line tool to be installed on the host system.
 - `PyMuPDF` is used for PDF text and visual extraction.
 
 ### Hugging Face Tokens For Gated Models
@@ -205,6 +207,10 @@ Included model options:
 - `Qwen/Qwen2.5-VL-72B-Instruct`
 - `OpenGVLab/InternVL3_5-38B`
 - `google/gemma-3-27b-it`
+- `google/gemma-4-31B-it`
+- `google/gemma-4-26B-A4B-it`
+- `google/gemma-4-E4B-it`
+- `google/gemma-4-E2B-it`
 - `meta-llama/Llama-3.2-90B-Vision-Instruct`
 - `llava-hf/llava-onevision-qwen2-72b-ov-hf`
 - `llava-hf/LLaVA-NeXT-Video-34B-hf`
@@ -221,6 +227,10 @@ Model reference:
 | Qwen2.5 VL 72B | open | 136.75 GiB | text, image |
 | InternVL3.5 38B | open | 71.52 GiB | text, image |
 | Gemma 3 27B | gated | 51.13 GiB | text, image |
+| Gemma 4 31B | open | approx. Hugging Face repo size | text, image, video |
+| Gemma 4 26B A4B | open | approx. Hugging Face repo size | text, image, video |
+| Gemma 4 E4B | open | approx. Hugging Face repo size | text, image, audio, video |
+| Gemma 4 E2B | open | approx. Hugging Face repo size | text, image, audio, video |
 | Llama 3.2 90B Vision | gated | 330.45 GiB | text, image |
 | LLaVA OneVision 72B | open | 136.32 GiB | text, image |
 | LLaVA NeXT Video 34B | open | 64.74 GiB | text, image, video |

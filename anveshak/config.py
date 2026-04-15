@@ -68,6 +68,16 @@ IMAGE_EXTENSIONS = {
     ".webp",
 }
 
+AUDIO_EXTENSIONS = {
+    ".aac",
+    ".flac",
+    ".m4a",
+    ".mp3",
+    ".ogg",
+    ".opus",
+    ".wav",
+}
+
 VIDEO_EXTENSIONS = {
     ".avi",
     ".m4v",
@@ -150,6 +160,8 @@ class RuntimeConfig:
     seed: int = 0
     model_local_path: Path | None = None
     embedding_local_path: Path | None = None
+    whisper_model_name: str = "turbo"
+    whisper_device: str = "cpu"
 
     context_dir: Path = field(init=False)
     memory_dir: Path = field(init=False)

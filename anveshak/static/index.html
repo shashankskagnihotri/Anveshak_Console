@@ -3,11 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Anveshak Console</title>
+    <link rel="icon" type="image/svg+xml" sizes="any" href="/static/anveshak_favicon.svg?v=__STATIC_VERSION__" />
+    <link rel="shortcut icon" href="/static/anveshak_favicon.svg?v=__STATIC_VERSION__" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=__STATIC_VERSION__" />
   </head>
   <body>
     <div id="runtime-overlay" class="runtime-overlay">
@@ -37,7 +43,7 @@
 
     <header class="topbar">
       <div class="brand">
-        <img class="brand-logo" src="/static/anveshak_logo2.png" alt="Anveshak Console logo" />
+        <img class="brand-logo" src="/static/anveshak_logo2.png?v=__STATIC_VERSION__" alt="Anveshak Console logo" />
         <div>
           <p class="eyebrow">Private multimodal reasoning with local memory and live retrieval</p>
           <h1>Anveshak Console</h1>
@@ -123,6 +129,19 @@
             <textarea id="steer-input" placeholder="Point the assistant toward a source, constraint, or direction..."></textarea>
             <button id="steer-button" class="ghost">Send steering note</button>
           </div>
+          <div id="workspace-index-panel" class="panel workspace-index-panel hidden" aria-live="polite">
+            <div class="workspace-index-header">
+              <h2>Local-file Index</h2>
+              <span id="workspace-index-badge" class="badge active">Refreshing</span>
+            </div>
+            <div class="workspace-index-status">
+              <span class="workspace-index-spinner" aria-hidden="true"></span>
+              <div class="workspace-index-copy">
+                <strong id="workspace-index-title">Refreshing local-file index</strong>
+                <p id="workspace-index-detail" class="subtle">Anveshak is updating workspace retrieval in the background. You can keep chatting while this runs.</p>
+              </div>
+            </div>
+          </div>
         </aside>
 
         <section class="chat-panel">
@@ -152,8 +171,33 @@
                       <button type="button" class="web-mode-option" data-web-mode="always" role="radio" aria-checked="false">Searching the Web</button>
                     </div>
                   </div>
+                  <div class="media-mode-control">
+                    <span class="web-mode-caption">Web Media</span>
+                    <div id="media-mode-toggle" class="media-mode-toggle mode-safe" role="radiogroup" aria-label="Safety policy for inline web media">
+                      <span class="media-mode-thumb" aria-hidden="true"></span>
+                      <button type="button" class="media-mode-option is-selected" data-media-mode="safe" role="radio" aria-checked="true">Safe</button>
+                      <button type="button" class="media-mode-option" data-media-mode="unrestricted" role="radio" aria-checked="false">Unrestricted</button>
+                    </div>
+                    <p id="media-mode-warning" class="media-mode-warning hidden">
+                      Unrestricted web media can surface NSFW or graphic images/videos. User discretion is advised.
+                    </p>
+                  </div>
                 </div>
-                <button id="send-button">Send</button>
+                <div class="composer-submit">
+                  <div id="mic-panel" class="mic-panel hidden" aria-live="polite">
+                    <canvas id="mic-visualizer" class="mic-visualizer" width="152" height="44"></canvas>
+                    <span id="mic-status" class="mic-status">Mic ready. Whisper will transcribe your voice.</span>
+                  </div>
+                  <button id="mic-button" class="ghost mic-button hidden" type="button" aria-label="Record audio" title="Record audio">
+                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                      <rect x="9" y="3" width="6" height="12" rx="3"></rect>
+                      <path d="M7 11.5a5 5 0 0 0 10 0"></path>
+                      <path d="M12 16.5v4"></path>
+                      <path d="M8.5 20.5h7"></path>
+                    </svg>
+                  </button>
+                  <button id="send-button" type="button">Send</button>
+                </div>
               </div>
             </label>
           </div>
@@ -419,6 +463,9 @@
       </div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/marked@13.0.3/marked.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+    <script defer src="/static/app.js?v=__STATIC_VERSION__"></script>
   </body>
 </html>

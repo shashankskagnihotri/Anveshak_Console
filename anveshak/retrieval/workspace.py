@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from threading import Lock
 from typing import Iterable
 import re
 
@@ -26,6 +29,8 @@ class WorkspaceIndex:
         self.store = PersistentFaissStore(self.root, "workspace")
         self.manifest_path = self.root / "manifest.json"
         self.manifest = self._load_manifest()
+        self._refresh_lock = Lock()
+        self._swap_lock = Lock()
 
     def _load_manifest(self) -> dict[str, dict[str, str | int]]:
         """Load the file fingerprint manifest used for incremental refreshes."""
@@ -42,55 +47,89 @@ class WorkspaceIndex:
     def _iter_candidate_files(self) -> Iterable[Path]:
         """Yield local files that should participate in ambient workspace retrieval."""
 
-        for path in self.config.workspace_root.rglob("*"):
-            if not path.is_file():
-                continue
-            if any(part in IGNORED_DIR_NAMES for part in path.parts):
-                continue
-            if path.suffix.lower() not in TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS:
-                continue
-            try:
-                size = path.stat().st_size
-            except OSError:
-                continue
-            if size > self.config.max_indexed_file_bytes:
-                continue
-            yield path
+        for root_text, dir_names, file_names in os.walk(self.config.workspace_root, topdown=True):
+            dir_names[:] = [name for name in dir_names if name not in IGNORED_DIR_NAMES]
+            root_path = Path(root_text)
+            for filename in file_names:
+                path = root_path / filename
+                if path.suffix.lower() not in TEXT_EXTENSIONS | DOCUMENT_EXTENSIONS:
+                    continue
+                try:
+                    size = path.stat().st_size
+                except OSError:
+                    continue
+                if size > self.config.max_indexed_file_bytes:
+                    continue
+                yield path
 
     def refresh(self) -> list[str]:
         """Re-index changed files and drop stale entries from the workspace store."""
 
-        changed_paths: list[Path] = []
-        seen: set[str] = set()
+        with self._refresh_lock:
+            with self._swap_lock:
+                current_store = self.store
+                manifest_snapshot = dict(self.manifest)
+            candidate_paths = list(self._iter_candidate_files())
+            seen_paths: set[str] = set()
+            changed_paths: list[Path] = []
 
-        for path in self._iter_candidate_files():
+            for path in candidate_paths:
+                resolved = str(path.resolve())
+                seen_paths.add(resolved)
+                try:
+                    stat = path.stat()
+                except OSError:
+                    continue
+                fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}"
+                if manifest_snapshot.get(resolved, {}).get("fingerprint") == fingerprint:
+                    continue
+                changed_paths.append(path)
+
+            stale_paths = set(manifest_snapshot) - seen_paths
+            if not changed_paths and not stale_paths:
+                return []
+
+            replaced_paths = stale_paths | {str(path.resolve()) for path in changed_paths}
+            try:
+                reused_embeddings, reused_metadatas = current_store.snapshot_rows(
+                    lambda metadata: (
+                        str(metadata.get("source_path", "")) in seen_paths
+                        and str(metadata.get("source_path", "")) not in replaced_paths
+                    )
+                )
+                changed_texts, changed_metadatas, changed_manifest = self._prepare_documents(changed_paths)
+            except RuntimeError:
+                self._rebuild_index(paths=candidate_paths)
+                return [str(path) for path in changed_paths]
+            changed_embeddings = self.embedder.encode_documents(changed_texts) if changed_metadatas else None
+
+            next_manifest = {
+                path_text: payload
+                for path_text, payload in manifest_snapshot.items()
+                if path_text in seen_paths and path_text not in replaced_paths
+            }
+            next_manifest.update(changed_manifest)
+            self._build_and_activate_index(
+                reused_embeddings=reused_embeddings,
+                reused_metadatas=reused_metadatas,
+                changed_embeddings=changed_embeddings,
+                changed_metadatas=changed_metadatas,
+                manifest=next_manifest,
+            )
+            return [str(path) for path in changed_paths]
+
+    def _prepare_documents(
+        self,
+        paths: list[Path],
+    ) -> tuple[list[str], list[dict[str, str | int]], dict[str, dict[str, str | int]]]:
+        """Read and chunk candidate files into metadata-rich documents plus manifest rows."""
+
+        texts: list[str] = []
+        metadatas: list[dict[str, str | int]] = []
+        manifest_rows: dict[str, dict[str, str | int]] = {}
+
+        for path in paths:
             resolved = str(path.resolve())
-            seen.add(resolved)
-            stat = path.stat()
-            fingerprint = f"{stat.st_mtime_ns}:{stat.st_size}"
-            if self.manifest.get(resolved, {}).get("fingerprint") == fingerprint:
-                continue
-            changed_paths.append(path)
-
-        stale_paths = set(self.manifest) - seen
-        if stale_paths:
-            self._rebuild_index(skip_paths=stale_paths)
-
-        if changed_paths:
-            self._rebuild_index()
-
-        return [str(path) for path in changed_paths]
-
-    def _rebuild_index(self, *, skip_paths: set[str] | None = None) -> None:
-        """Recreate the workspace vector store from the current candidate files."""
-
-        documents: list[tuple[str, dict[str, str]]] = []
-        new_manifest: dict[str, dict[str, str | int]] = {}
-
-        for path in self._iter_candidate_files():
-            resolved = str(path.resolve())
-            if skip_paths and resolved in skip_paths:
-                continue
             try:
                 text = extract_text_from_path(path)
             except Exception:
@@ -105,33 +144,78 @@ class WorkspaceIndex:
                 chunk_prefix=resolved,
             )
             for chunk in chunks:
-                documents.append(
-                    (
-                        chunk.text,
-                        {
-                            "source_kind": "file",
-                            "source_path": resolved,
-                            "label": path.name,
-                            "chunk_text": chunk.text,
-                            "chunk_id": chunk.chunk_id,
-                            "start_char": chunk.start_char,
-                            "end_char": chunk.end_char,
-                        },
-                    )
+                texts.append(chunk.text)
+                metadatas.append(
+                    {
+                        "source_kind": "file",
+                        "source_path": resolved,
+                        "label": path.name,
+                        "chunk_text": chunk.text,
+                        "chunk_id": chunk.chunk_id,
+                        "start_char": chunk.start_char,
+                        "end_char": chunk.end_char,
+                    }
                 )
-            stat = path.stat()
-            new_manifest[resolved] = {
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            manifest_rows[resolved] = {
                 "fingerprint": f"{stat.st_mtime_ns}:{stat.st_size}",
                 "name": path.name,
                 "kind": detect_media_kind(path),
             }
+        return texts, metadatas, manifest_rows
 
-        self.store.reset()
-        if documents:
-            embeddings = self.embedder.encode_documents([text for text, _ in documents])
-            self.store.add(embeddings, [metadata for _, metadata in documents])
-        self.manifest = new_manifest
-        self._save_manifest()
+    def _rebuild_index(self, *, paths: list[Path] | None = None) -> None:
+        """Recreate the workspace vector store from the current candidate files."""
+
+        paths = list(paths or self._iter_candidate_files())
+        texts, metadatas, new_manifest = self._prepare_documents(paths)
+        embeddings = self.embedder.encode_documents(texts) if metadatas else None
+        self._build_and_activate_index(
+            reused_embeddings=None,
+            reused_metadatas=[],
+            changed_embeddings=embeddings,
+            changed_metadatas=metadatas,
+            manifest=new_manifest,
+        )
+
+    def _build_and_activate_index(
+        self,
+        *,
+        reused_embeddings,
+        reused_metadatas: list[dict[str, str | int]],
+        changed_embeddings,
+        changed_metadatas: list[dict[str, str | int]],
+        manifest: dict[str, dict[str, str | int]],
+    ) -> None:
+        """Build a fresh index off to the side and atomically swap it into place."""
+
+        with TemporaryDirectory(dir=str(self.root), prefix="workspace-build-") as temp_dir:
+            build_root = Path(temp_dir)
+            next_store = PersistentFaissStore(build_root, "workspace")
+            next_store.reset()
+            if reused_metadatas:
+                next_store.add(reused_embeddings, reused_metadatas, save=False)
+            if changed_metadatas and changed_embeddings is not None:
+                next_store.add(changed_embeddings, changed_metadatas, save=False)
+            if reused_metadatas or changed_metadatas:
+                next_store.save()
+            manifest_path = build_root / "manifest.json"
+            manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+            with self._swap_lock:
+                for filename in ("workspace.faiss", "workspace.json"):
+                    target = self.root / filename
+                    built = build_root / filename
+                    if built.exists():
+                        built.replace(target)
+                    elif target.exists():
+                        target.unlink()
+                manifest_path.replace(self.manifest_path)
+                self.store = PersistentFaissStore(self.root, "workspace")
+                self.manifest = manifest
 
     def index_paths(self, paths: list[Path], *, parsed_texts: dict[str, str] | None = None) -> list[str]:
         """Index explicit document attachments without rebuilding the whole workspace."""
@@ -185,11 +269,13 @@ class WorkspaceIndex:
 
         if not query.strip():
             return []
+        with self._swap_lock:
+            store = self.store
         # Avoid loading the embedding model when the workspace index is still empty.
-        if self.store.index is None or not self.store.metadata:
+        if store.index is None or not store.metadata:
             return []
         vector = self.embedder.encode_query(query)
-        rows = self.store.search(vector, top_k)
+        rows = store.search(vector, top_k)
         results: list[RetrievedChunk] = []
         for index, (score, item) in enumerate(rows, start=1):
             source_path = item["source_path"]

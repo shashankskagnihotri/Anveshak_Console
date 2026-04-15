@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .chat.service import ChatService
@@ -33,10 +33,26 @@ def build_app(config: RuntimeConfig, service: ChatService) -> FastAPI:
 
     app = FastAPI(title="Anveshak Console", version="0.1.0")
 
+    @app.middleware("http")
+    async def disable_browser_cache_for_ui(request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path == "/" or request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        if request.url.path == "/":
+            response.headers["Clear-Site-Data"] = '"cache"'
+        return response
+
     app.mount("/static", StaticFiles(directory=str(config.static_dir)), name="static")
-    @app.get("/")
-    async def index() -> FileResponse:
-        return FileResponse(config.static_dir / "index.html")
+    @app.get("/", response_class=HTMLResponse)
+    async def index() -> HTMLResponse:
+        static_version = _static_asset_version(config.static_dir)
+        html = (config.static_dir / "index.html").read_text(encoding="utf-8").replace(
+            "__STATIC_VERSION__",
+            static_version,
+        )
+        return HTMLResponse(html)
 
     @app.get("/api/health")
     async def health() -> JSONResponse:
@@ -45,6 +61,14 @@ def build_app(config: RuntimeConfig, service: ChatService) -> FastAPI:
     @app.get("/api/runtime/status")
     async def runtime_status() -> JSONResponse:
         return JSONResponse(service.runtime_status())
+
+    @app.get("/api/workspace-index/status")
+    async def workspace_index_status() -> JSONResponse:
+        return JSONResponse(service.workspace_index_status())
+
+    @app.post("/api/runtime/whisper-warmup")
+    async def whisper_warmup() -> JSONResponse:
+        return JSONResponse({"scheduled": service.schedule_whisper_prewarm()})
 
     @app.post("/api/runtime/huggingface-token")
     async def configure_huggingface_token(payload: dict) -> JSONResponse:
@@ -83,25 +107,51 @@ def build_app(config: RuntimeConfig, service: ChatService) -> FastAPI:
         session = service.get_or_create_session(session_id)
         return JSONResponse(session.to_dict())
 
+    @app.post("/api/sessions/{session_id}/microphone-transcription")
+    async def transcribe_microphone_recording(session_id: str, file: UploadFile = File(...)) -> JSONResponse:
+        session = service.get_or_create_session(session_id)
+        upload_paths = await _persist_uploads(config, session.session_id, [file])
+        try:
+            if not upload_paths:
+                raise HTTPException(status_code=400, detail="No microphone recording was uploaded.")
+            payload = await _await_thread_call(service.transcribe_microphone_recording, upload_paths[0])
+            if payload is _SHUTDOWN_SENTINEL:
+                raise HTTPException(status_code=503, detail="The server is shutting down; transcription could not finish.")
+            return JSONResponse(payload)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        finally:
+            _cleanup_saved_uploads(upload_paths)
+
     @app.post("/api/sessions/{session_id}/messages")
     async def submit_message(
         session_id: str,
-        text: str = Form(...),
+        text: str = Form(""),
         web_mode: Literal["off", "auto", "always"] = Form("auto"),
+        media_mode: Literal["safe", "unrestricted"] = Form("safe"),
         files: list[UploadFile] | None = File(default=None),
     ) -> JSONResponse:
+        submitted_text = text or ""
+        submitted_files = files or []
+        if not submitted_text.strip() and not submitted_files:
+            raise HTTPException(status_code=400, detail="Provide text or at least one file before sending a message.")
         session = service.get_or_create_session(session_id)
-        upload_paths = await _persist_uploads(config, session.session_id, files or [])
+        upload_paths = await _persist_uploads(config, session.session_id, submitted_files)
         attachments = service.save_uploads(session.session_id, upload_paths)
         try:
             run_handle = service.submit_message(
                 session_id=session.session_id,
-                text=text,
+                text=submitted_text,
                 attachments=attachments,
                 web_mode=web_mode,
+                media_mode=media_mode,
             )
         except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
+            detail = str(exc)
+            status_code = 409 if "Finish the current run" in detail else 400
+            raise HTTPException(status_code=status_code, detail=detail) from exc
         return JSONResponse({"run_id": run_handle.run_id, "session_id": session.session_id})
 
     @app.post("/api/runs/{run_id}/steer")
@@ -196,6 +246,16 @@ async def _persist_uploads(config: RuntimeConfig, session_id: str, files: list[U
     return saved
 
 
+def _cleanup_saved_uploads(paths: list[Path]) -> None:
+    """Best-effort cleanup for temporary upload files that should not persist."""
+
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            continue
+
+
 def _extract_api_key(request: Request) -> str | None:
     """Read an API key from standard bearer or x-api-key request headers."""
 
@@ -204,3 +264,18 @@ def _extract_api_key(request: Request) -> str | None:
         return authorization.split(" ", 1)[1].strip() or None
     x_api_key = request.headers.get("x-api-key", "").strip()
     return x_api_key or None
+
+
+def _static_asset_version(static_dir: Path) -> str:
+    """Return a simple revision token so browser reloads pick up fresh UI assets."""
+
+    version = 0
+    for name in ("index.html", "app.js", "styles.css", "anveshak_logo2.png", "anveshak_favicon.svg"):
+        path = static_dir / name
+        if not path.exists():
+            continue
+        try:
+            version = max(version, path.stat().st_mtime_ns)
+        except Exception:
+            continue
+    return str(version or 1)

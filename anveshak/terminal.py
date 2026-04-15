@@ -24,6 +24,9 @@ class TerminalChat:
 
         self.console.print("[bold]Anveshak Console[/bold]")
         self._wait_for_runtime()
+        self.console.print("[dim]Loading the reasoning model into GPU/CPU memory before the first prompt[/dim]")
+        self.service.wait_until_model_ready()
+        self.console.print("[dim]Model warm and ready.[/dim]")
         self.console.print("Commands: /attach <paths...>, /files, /clear, /obliviate, /exit")
         while True:
             try:
@@ -87,6 +90,9 @@ class TerminalChat:
                 self.console.print(payload.get("text", ""), style="green", end="")
             elif event.event_type == "warning":
                 self.console.print(f"[yellow]{payload.get('text', '')}[/yellow]")
+            elif event.event_type == "transcription":
+                attachment_name = payload.get("attachment_name", "audio")
+                self.console.print(f"[bold magenta]Transcript ({attachment_name})>[/bold magenta] {payload.get('text', '')}")
             elif event.event_type == "done":
                 self.console.print()
                 citations = payload.get("citations", [])

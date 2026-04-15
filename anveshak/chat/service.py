@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 import json
 from queue import Empty, Queue
 import re
@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ..retrieval.memory import ConversationMemory
     from ..retrieval.web import WebIndexer
     from ..retrieval.workspace import WorkspaceIndex
+    from ..transcription import WhisperTranscriber
 
 
 class ChatService:
@@ -45,6 +46,7 @@ class ChatService:
         self.web_indexer: WebIndexer | None = None
         self.active_search: ActiveSearchOrchestrator | None = None
         self.runner: QwenRunner | None = None
+        self.whisper_transcriber: WhisperTranscriber | None = None
         self.api_calls = APICallManager(config)
         self.sessions: dict[str, ChatSession] = {}
         self.runs: dict[str, RunHandle] = {}
@@ -55,11 +57,29 @@ class ChatService:
         self._prewarm_started = False
         self._memory_tasks: Queue[dict[str, Any]] = Queue()
         self._memory_idle_grace_seconds = 2.0
+        self._workspace_refresh_lock = Lock()
+        self._workspace_refresh_requested = False
+        self._workspace_refresh_thread: Thread | None = None
+        self._whisper_prewarm_lock = Lock()
+        self._whisper_prewarm_thread: Thread | None = None
+        self._workspace_refresh_status: dict[str, Any] = {
+            "enabled": bool(self.config.enable_workspace_indexing),
+            "active": False,
+            "message": "",
+            "detail": "",
+            "last_error": "",
+            "last_started_at": None,
+            "last_completed_at": None,
+            "last_duration_seconds": None,
+            "last_changed_count": 0,
+        }
         if self.config.prepare_runtime_on_start:
             self.runtime.start_async()
             self._start_background_prewarm()
         Thread(target=self._idle_unload_loop, daemon=True).start()
         Thread(target=self._memory_compression_loop, daemon=True).start()
+        if self.config.enable_workspace_indexing:
+            self.schedule_workspace_refresh(reason="startup")
 
     def _ensure_components(self) -> None:
         """Instantiate heavy retrieval/model components lazily on first use."""
@@ -89,6 +109,53 @@ class ChatService:
                 from ..modeling.factory import create_runner
 
                 self.runner = create_runner(self.config)
+            if self.whisper_transcriber is None:
+                from ..transcription import WhisperTranscriber
+
+                self.whisper_transcriber = WhisperTranscriber(
+                    model_name=self.config.whisper_model_name,
+                    device=self.config.whisper_device,
+                )
+
+    def _ensure_whisper_transcriber(self) -> "WhisperTranscriber":
+        """Load the Whisper helper without forcing the full reasoning stack to initialize."""
+
+        with self._component_lock:
+            if self.whisper_transcriber is None:
+                from ..transcription import WhisperTranscriber
+
+                self.whisper_transcriber = WhisperTranscriber(
+                    model_name=self.config.whisper_model_name,
+                    device=self.config.whisper_device,
+                )
+            return self.whisper_transcriber
+
+    def schedule_whisper_prewarm(self) -> bool:
+        """Warm Whisper in the background so the first mic transcription starts faster."""
+
+        transcriber = self._ensure_whisper_transcriber()
+        if getattr(transcriber, "is_loaded", lambda: False)():
+            return False
+        with self._whisper_prewarm_lock:
+            if self._whisper_prewarm_thread is not None and self._whisper_prewarm_thread.is_alive():
+                return False
+            self._whisper_prewarm_thread = Thread(target=self._prewarm_whisper_transcriber, daemon=True)
+            self._whisper_prewarm_thread.start()
+            return True
+
+    def _ensure_workspace_index(self) -> "WorkspaceIndex":
+        """Load only the embedding model and workspace index when background indexing needs them."""
+
+        with self._component_lock:
+            if self.embedder is None:
+                from ..retrieval.embeddings import QwenEmbeddingModel
+
+                self.embedder = QwenEmbeddingModel(self.config)
+            if self.workspace_index is None:
+                from ..retrieval.workspace import WorkspaceIndex
+
+                self.workspace_index = WorkspaceIndex(self.config, self.embedder)
+            return self.workspace_index
 
     def _start_background_prewarm(self) -> None:
         """Warm the model in the background once runtime assets are ready."""
@@ -129,6 +196,17 @@ class ChatService:
         worker.start()
         return worker
 
+    def _prewarm_whisper_transcriber(self) -> None:
+        """Load Whisper asynchronously without blocking the browser microphone flow."""
+
+        try:
+            self._ensure_whisper_transcriber().warmup()
+        except Exception:
+            return
+        finally:
+            with self._whisper_prewarm_lock:
+                self._whisper_prewarm_thread = None
+
     def create_session(self) -> ChatSession:
         """Create and persist a new chat session."""
 
@@ -162,7 +240,8 @@ class ChatService:
             if path.resolve() != target_path.resolve():
                 shutil.copy2(path, target_path)
             kind = detect_media_kind(target_path)
-            attachments.append(Attachment.from_path(target_path, media_kind=kind, source="upload"))
+            source = "microphone" if target_path.name.startswith("microphone-recording-") else "upload"
+            attachments.append(Attachment.from_path(target_path, media_kind=kind, source=source))
         return attachments
 
     def submit_message(
@@ -172,11 +251,13 @@ class ChatService:
         text: str,
         attachments: list[Attachment],
         web_mode: str = "auto",
+        media_mode: str = "safe",
     ) -> RunHandle:
         """Queue one user message for background processing."""
 
         session = self.get_or_create_session(session_id)
         normalized_web_mode = _normalize_web_mode(web_mode)
+        normalized_media_mode = _normalize_media_mode(media_mode)
         handle = RunHandle(session.session_id)
         with self._lock:
             active_for_session = any(
@@ -199,6 +280,7 @@ class ChatService:
             {
                 "attachment_count": len(attachments),
                 "web_mode": normalized_web_mode,
+                "media_mode": normalized_media_mode,
             },
         )
         worker = Thread(
@@ -209,6 +291,7 @@ class ChatService:
                 "attachments": attachments,
                 "handle": handle,
                 "web_mode": normalized_web_mode,
+                "media_mode": normalized_media_mode,
             },
             daemon=True,
         )
@@ -220,6 +303,37 @@ class ChatService:
 
         return self.runtime.status_dict()
 
+    def workspace_index_status(self) -> dict[str, Any]:
+        """Expose whether the ambient workspace index is currently refreshing in the background."""
+
+        with self._workspace_refresh_lock:
+            return dict(self._workspace_refresh_status)
+
+    def schedule_workspace_refresh(self, *, reason: str = "background") -> bool:
+        """Request one non-blocking workspace refresh if ambient indexing is enabled."""
+
+        if not self.config.enable_workspace_indexing:
+            return False
+        with self._workspace_refresh_lock:
+            self._workspace_refresh_requested = True
+            if self._workspace_refresh_thread is not None and self._workspace_refresh_thread.is_alive():
+                return False
+            self._workspace_refresh_thread = Thread(
+                target=self._workspace_refresh_loop,
+                kwargs={"reason": reason},
+                daemon=True,
+            )
+            self._workspace_refresh_thread.start()
+            return True
+
+    def wait_until_model_ready(self) -> None:
+        """Block until the configured reasoning model has finished loading."""
+
+        self.ensure_runtime()
+        self._ensure_components()
+        if self.runner is not None:
+            self.runner.load()
+
     def configure_huggingface_token(self, token: str) -> dict[str, Any]:
         """Accept a Hugging Face token from the UI and retry runtime preparation."""
 
@@ -227,11 +341,82 @@ class ChatService:
         self._start_background_prewarm()
         return payload
 
+    def transcribe_microphone_recording(self, audio_path: Path) -> dict[str, str]:
+        """Transcribe one browser-recorded audio clip into editable chat text."""
+
+        if detect_media_kind(audio_path) != "audio":
+            raise ValueError("Microphone transcription expects an audio file.")
+        transcriber = self._ensure_whisper_transcriber()
+        transcript = compact_whitespace(transcriber.transcribe(audio_path))
+        if not transcript:
+            raise RuntimeError(f"No transcript was produced for {audio_path.name}.")
+        return {
+            "attachment_name": audio_path.name,
+            "backend": "Whisper",
+            "text": transcript,
+        }
+
     def wait_for_runtime_status_change(self, last_version: int, timeout: float | None = None) -> dict[str, Any] | None:
         """Block until a newer runtime status payload is available."""
 
         self.runtime.start_async()
         return self.runtime.wait_for_status_change(last_version, timeout=timeout)
+
+    def _workspace_refresh_loop(self, *, reason: str) -> None:
+        """Continuously process queued workspace refresh requests without blocking chat runs."""
+
+        while True:
+            with self._workspace_refresh_lock:
+                if not self._workspace_refresh_requested:
+                    self._workspace_refresh_thread = None
+                    return
+                self._workspace_refresh_requested = False
+                started_at = utc_now_iso()
+                self._workspace_refresh_status.update(
+                    {
+                        "enabled": True,
+                        "active": True,
+                        "message": "Refreshing local-file index",
+                        "detail": "Anveshak is updating workspace retrieval in the background. You can keep chatting while this runs.",
+                        "last_error": "",
+                        "last_started_at": started_at,
+                    }
+                )
+
+            started = time.perf_counter()
+            try:
+                index = self._ensure_workspace_index()
+                changed = index.refresh()
+                duration = round(time.perf_counter() - started, 2)
+                with self._workspace_refresh_lock:
+                    self._workspace_refresh_status.update(
+                        {
+                            "enabled": True,
+                            "active": False,
+                            "message": "Local-file index ready",
+                            "detail": (
+                                f"Indexed {len(changed)} changed local files in the background."
+                                if changed
+                                else "Local-file index was already up to date."
+                            ),
+                            "last_error": "",
+                            "last_completed_at": utc_now_iso(),
+                            "last_duration_seconds": duration,
+                            "last_changed_count": len(changed),
+                        }
+                    )
+            except Exception as exc:
+                with self._workspace_refresh_lock:
+                    self._workspace_refresh_status.update(
+                        {
+                            "enabled": True,
+                            "active": False,
+                            "message": "Local-file index refresh failed",
+                            "detail": str(exc),
+                            "last_error": str(exc),
+                            "last_completed_at": utc_now_iso(),
+                        }
+                    )
 
     def list_api_calls(self) -> list[dict[str, Any]]:
         """List every saved API-call preset."""
@@ -395,6 +580,7 @@ class ChatService:
         attachments: list[Attachment],
         handle: RunHandle,
         web_mode: str,
+        media_mode: str,
     ) -> None:
         """Resolve one user message into retrieval context, answer, and memory update."""
 
@@ -426,28 +612,33 @@ class ChatService:
                     phase="attachments",
                     text="Parsing attached documents into text and visual context",
                 )
+            if self.config.enable_workspace_indexing:
+                self.schedule_workspace_refresh(reason="prompt")
 
-            with ThreadPoolExecutor(max_workers=2) as executor:
+            with ThreadPoolExecutor(max_workers=1) as executor:
                 attachment_future = executor.submit(
                     _prepare_attachment_context,
                     attachments,
                     profile,
                     self.config,
                 )
-                workspace_future: Future[list[str]] | None = None
-                if self.config.enable_workspace_indexing and self.workspace_index is not None:
-                    handle.emit("status", phase="workspace", text="Refreshing local-file index")
-                    workspace_future = executor.submit(self.workspace_index.refresh)
-
                 model_attachments, inline_document_chunks, warnings, parsed_document_texts = attachment_future.result()
-                changed: list[str] = []
-                if workspace_future is not None:
-                    changed = workspace_future.result()
 
             if warnings:
                 handle.emit("warning", text="\n".join(warnings))
-            if changed:
-                handle.emit("status", phase="workspace", text=f"Indexed {len(changed)} changed local files")
+
+            effective_text, model_attachments, audio_transcriptions = self._apply_audio_transcriptions(
+                user_text=text,
+                model_attachments=model_attachments,
+                profile=profile,
+                handle=handle,
+                run_logger=run_logger,
+            )
+            if audio_transcriptions:
+                session.messages[-1].text = effective_text
+                if session.title == "New Session" and effective_text.strip():
+                    session.title = effective_text.strip().splitlines()[0][:80]
+                self._save_session(session)
 
             if attachments:
                 file_paths = [Path(item.path) for item in attachments if item.media_kind == "document"]
@@ -460,6 +651,8 @@ class ChatService:
             answer_text = ""
             reasoning_text = ""
             citations: list[dict[str, Any]] = []
+            media_results_payload: list[dict[str, Any]] = []
+            media_warning = ""
             while attempt < 3:
                 attempt += 1
                 if run_logger is not None:
@@ -467,10 +660,10 @@ class ChatService:
                 # Each restart pulls in any newly queued steering notes before retrieval and generation.
                 steering_notes = handle.consume_steering_notes()
                 recent = _prior_recent_messages_for_current_turn(session, self.config.max_recent_turns)
-                memory_chunks = self.memory.retrieve(text, self.config.memory_top_k) if self.memory is not None else []
-                direct_paths = self.workspace_index.extract_path_mentions(text) if self.workspace_index is not None else []
+                memory_chunks = self.memory.retrieve(effective_text, self.config.memory_top_k) if self.memory is not None else []
+                direct_paths = self.workspace_index.extract_path_mentions(effective_text) if self.workspace_index is not None else []
                 direct_file_chunks = self.workspace_index.direct_path_context(direct_paths) if self.workspace_index is not None else []
-                retrieved_file_chunks = self.workspace_index.retrieve(text, self.config.file_top_k) if self.workspace_index is not None else []
+                retrieved_file_chunks = self.workspace_index.retrieve(effective_text, self.config.file_top_k) if self.workspace_index is not None else []
                 file_chunks = _merge_chunks(
                     inline_document_chunks,
                     direct_file_chunks,
@@ -479,8 +672,9 @@ class ChatService:
                 )
 
                 web_chunks = []
+                search_plan = None
                 search_plan = _build_search_plan(
-                    user_query=text,
+                    user_query=effective_text,
                     recent_messages=recent,
                     config=self.config,
                     web_mode_override=web_mode,
@@ -493,7 +687,7 @@ class ChatService:
                         text=f"Web plan: {search_plan.rationale}",
                     )
                     web_chunks, _rounds = self.active_search.run(
-                        user_query=text,
+                        user_query=effective_text,
                         plan=search_plan,
                         model_runner=self.runner,
                         handle=handle,
@@ -506,7 +700,7 @@ class ChatService:
                 if model_load_worker is not None and model_load_worker.is_alive():
                     handle.emit("status", phase="model-load", text="Finalizing model load while retrieval results are ready")
                 answer = self.runner.stream_answer(
-                    user_query=text,
+                    user_query=effective_text,
                     attachments=model_attachments,
                     memory_chunks=memory_chunks,
                     file_chunks=file_chunks,
@@ -523,6 +717,28 @@ class ChatService:
                 answer_text = answer.answer
                 reasoning_text = answer.reasoning
                 citations = [item.citation() for item in _merge_chunks(file_chunks, web_chunks, memory_chunks, limit=24)]
+                if search_plan is not None and search_plan.enabled and self.web_indexer is not None:
+                    handle.emit(
+                        "status",
+                        phase="web-media",
+                        text=(
+                            "Curating safe web media previews"
+                            if media_mode == "safe"
+                            else "Preparing unrestricted web media previews"
+                        ),
+                    )
+                    try:
+                        media_items = self.web_indexer.search_media(
+                            search_plan.search_queries or [effective_text],
+                            profile=profile,
+                            runner=self.runner,
+                            media_mode=media_mode,
+                        )
+                    except Exception as exc:
+                        handle.emit("warning", text=f"Web media previews could not be prepared: {exc}")
+                        media_items = []
+                    media_results_payload = [item.to_dict() for item in media_items]
+                    media_warning = _media_warning_for_mode(media_mode) if media_mode == "unrestricted" else ""
                 break
 
             assistant_message = ChatMessage(
@@ -538,12 +754,15 @@ class ChatService:
                 "answer": answer_text,
                 "reasoning": reasoning_text,
                 "citations": citations,
+                "media_results": media_results_payload,
+                "media_mode": media_mode,
+                "media_warning": media_warning,
                 "session_id": session.session_id,
             }
             handle.emit("done", **done_payload)
             self._queue_memory_compression(
                 run_id=handle.run_id,
-                user_text=text,
+                user_text=effective_text,
                 assistant_text=answer_text,
                 citations=citations,
                 recent_messages=session.recent_messages(self.config.max_recent_turns),
@@ -775,6 +994,66 @@ class ChatService:
         )
         return chunks
 
+    def _apply_audio_transcriptions(
+        self,
+        *,
+        user_text: str,
+        model_attachments: list[Attachment],
+        profile: dict[str, Any],
+        handle: RunHandle,
+        run_logger: RunLogger | None,
+    ) -> tuple[str, list[Attachment], list[dict[str, str]]]:
+        """Transcribe supported audio inputs before the main reasoning step."""
+
+        audio_attachments = [item for item in model_attachments if item.media_kind == "audio"]
+        if not audio_attachments:
+            return user_text, model_attachments, []
+        transcriptions: list[dict[str, str]] = []
+        for index, attachment in enumerate(audio_attachments, start=1):
+            backend = self._select_audio_transcription_backend(attachment=attachment, profile=profile)
+            backend_label = "Gemma" if backend == "gemma" else "Whisper"
+            handle.emit(
+                "status",
+                phase="transcription",
+                text=f"Transcribing audio clip {index}/{len(audio_attachments)} with {backend_label}: {attachment.name}",
+            )
+            transcript = self._transcribe_audio_attachment(attachment=attachment, backend=backend)
+            if not transcript:
+                handle.emit("warning", text=f"No transcript was produced for {attachment.name}.")
+                continue
+            payload = {"attachment_name": attachment.name, "backend": backend_label, "text": transcript}
+            transcriptions.append(payload)
+            handle.emit("transcription", **payload)
+
+        if run_logger is not None and transcriptions:
+            run_logger.record_note("audio_transcribed", {"items": transcriptions})
+
+        remaining_attachments = [item for item in model_attachments if item.media_kind != "audio"]
+        effective_text = _merge_audio_transcriptions_into_user_text(user_text, transcriptions)
+        return effective_text, remaining_attachments, transcriptions
+
+    def _select_audio_transcription_backend(self, *, attachment: Attachment, profile: dict[str, Any]) -> str:
+        """Choose whether one audio clip should be transcribed by Gemma or Whisper."""
+
+        if attachment.source == "microphone":
+            return "whisper"
+        if profile.get("supports_audio"):
+            return "gemma"
+        return "whisper"
+
+    def _transcribe_audio_attachment(self, *, attachment: Attachment, backend: str) -> str:
+        """Route one audio attachment through the requested transcription engine."""
+
+        if backend == "gemma":
+            if self.runner is None or not hasattr(self.runner, "transcribe_audio"):
+                raise RuntimeError(
+                    f'{self.config.model_id} is configured for Gemma audio, but the current runner cannot transcribe audio inputs.'
+                )
+            return compact_whitespace(self.runner.transcribe_audio(attachment))
+        if self.whisper_transcriber is None:
+            raise RuntimeError("Whisper is not available for audio transcription.")
+        return compact_whitespace(self.whisper_transcriber.transcribe(Path(attachment.path)))
+
 
 def _merge_chunks(*chunk_groups, limit: int) -> list:
     """Merge retrieved chunks while preserving order and removing duplicates."""
@@ -828,6 +1107,10 @@ def _prepare_attachment_context(
                 accepted.append(attachment)
             else:
                 unsupported_images.append(attachment.name)
+            continue
+
+        if attachment.media_kind == "audio":
+            accepted.append(attachment)
             continue
 
         if attachment.media_kind == "video":
@@ -944,6 +1227,42 @@ def _normalize_web_mode(value: str | None) -> str:
     if normalized not in {"off", "auto", "always"}:
         raise ValueError(f"Unsupported web mode: {value}")
     return normalized
+
+
+def _normalize_media_mode(value: str | None) -> str:
+    """Normalize one per-run remote-media safety policy value."""
+
+    normalized = compact_whitespace(value or "safe").lower()
+    if normalized not in {"safe", "unrestricted"}:
+        raise ValueError(f"Unsupported media mode: {value}")
+    return normalized
+
+
+def _media_warning_for_mode(media_mode: str) -> str:
+    """Return the user-facing warning copy for unrestricted remote media previews."""
+
+    if _normalize_media_mode(media_mode) != "unrestricted":
+        return ""
+    return (
+        "Unrestricted web media is enabled. NSFW or graphic images/videos can appear in the results. "
+        "User discretion is advised."
+    )
+
+
+def _merge_audio_transcriptions_into_user_text(user_text: str, transcriptions: list[dict[str, str]]) -> str:
+    """Blend typed input and audio transcripts into one task string for retrieval and reasoning."""
+
+    cleaned_user_text = user_text.strip()
+    transcript_blocks = [
+        f'Audio transcription from {item["attachment_name"]} ({item.get("backend", "transcriber")}):\n{item["text"]}'
+        for item in transcriptions
+        if item.get("text")
+    ]
+    if not transcript_blocks:
+        return cleaned_user_text
+    if not cleaned_user_text:
+        return "\n\n".join(transcript_blocks).strip()
+    return f"{cleaned_user_text}\n\n" + "\n\n".join(transcript_blocks)
 
 
 def _build_search_plan(

@@ -8,7 +8,9 @@ fastapi
 gptqmodel>=5.7.0,<5.9
 huggingface-hub
 httpx
+librosa
 numpy
+openai-whisper
 optimum
 orjson
 openpyxl
@@ -25,6 +27,7 @@ rich
 safetensors
 sentence-transformers
 sentencepiece
+soundfile
 timm
 tiktoken
 torch

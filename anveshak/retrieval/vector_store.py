@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Callable
 from typing import Any
 
 import numpy as np
@@ -51,7 +52,7 @@ class PersistentFaissStore:
         base = faiss.IndexFlatIP(dimension)
         self.index = faiss.IndexIDMap2(base)
 
-    def add(self, embeddings: np.ndarray, metadatas: list[dict[str, Any]]) -> None:
+    def add(self, embeddings: np.ndarray, metadatas: list[dict[str, Any]], *, save: bool = True) -> None:
         """Append normalized embeddings and their metadata to the store."""
 
         if embeddings.ndim != 2:
@@ -75,7 +76,35 @@ class PersistentFaissStore:
         self.index.add_with_ids(normalized, ids)
         for row_id, metadata in zip(ids.tolist(), metadatas, strict=True):
             self.metadata[str(row_id)] = metadata
-        self.save()
+        if save:
+            self.save()
+
+    def snapshot_rows(
+        self,
+        predicate: Callable[[dict[str, Any]], bool] | None = None,
+    ) -> tuple[np.ndarray, list[dict[str, Any]]]:
+        """Return reconstructed vectors plus metadata for rows that match the predicate."""
+
+        if self.index is None or not self.metadata:
+            dimension = self.dimension or 0
+            return np.zeros((0, dimension), dtype=np.float32), []
+
+        rows: list[np.ndarray] = []
+        metadatas: list[dict[str, Any]] = []
+        for row_id_text, metadata in sorted(self.metadata.items(), key=lambda item: int(item[0])):
+            if predicate is not None and not predicate(metadata):
+                continue
+            try:
+                vector = np.asarray(self.index.reconstruct(int(row_id_text)), dtype=np.float32)
+            except Exception as exc:
+                raise RuntimeError(f"Could not reconstruct vector-store row {row_id_text}.") from exc
+            rows.append(vector)
+            metadatas.append(metadata)
+
+        if not rows:
+            dimension = self.dimension or 0
+            return np.zeros((0, dimension), dtype=np.float32), []
+        return np.vstack(rows).astype(np.float32, copy=False), metadatas
 
     def search(self, embedding: np.ndarray, top_k: int) -> list[tuple[float, dict[str, Any]]]:
         """Return the top ``k`` metadata rows ranked by dense similarity."""

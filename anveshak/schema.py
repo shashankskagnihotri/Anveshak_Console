@@ -152,3 +152,41 @@ class RetrievedChunk:
             "label": self.label,
             "metadata": self.metadata,
         }
+
+
+@dataclass(slots=True)
+class WebMediaResult:
+    """A normalized remote image or video preview that can be rendered in the chat UI."""
+
+    media_id: str
+    kind: str
+    title: str
+    content_url: str
+    preview_url: str
+    page_url: str = ""
+    snippet: str = ""
+    source_label: str = ""
+    embed_url: str | None = None
+    safety_mode: str = "safe"
+    safety_state: str = "allowed"
+    safety_reason: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize one media result for the browser payload."""
+
+        return {
+            "media_id": self.media_id,
+            "kind": self.kind,
+            "title": self.title,
+            "content_url": self.content_url,
+            "preview_url": self.preview_url,
+            "page_url": self.page_url,
+            "snippet": self.snippet,
+            "source_label": self.source_label,
+            "embed_url": self.embed_url,
+            "safety_mode": self.safety_mode,
+            "safety_state": self.safety_state,
+            "safety_reason": self.safety_reason,
+            "metadata": self.metadata,
+        }
