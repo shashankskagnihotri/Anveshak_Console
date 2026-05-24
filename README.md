@@ -5,6 +5,8 @@
 # Anveshak Console
 ## Open-source models that use Internet and have long-context memory
 
+# READ TECHNICAL REPORT AT [https://tinyurl.com/anveshak-console](https://tinyurl.com/anveshak-console)
+
 > Private multimodal reasoning with local memory and live retrieval.
 >
 > TL;DR: A private multimodal research console for local reasoning, live web retrieval, long-term memory, and API-style workflows.
